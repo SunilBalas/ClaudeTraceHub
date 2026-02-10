@@ -1,0 +1,392 @@
+@page "/conversation/{ProjectDirName}/{SessionId}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject ConversationCacheService CacheService
+@inject ClaudeDataDiscoveryService DiscoveryService
+@inject ExcelExportService ExcelService
+@inject NavigationManager NavigationManager
+@inject IJSRuntime JS
+@inject IDialogService DialogService
+@inject AzureDevOpsService AzureDevOpsService
+@inject DataRefreshService RefreshService
+@using Markdig
+
+<PageTitle>Conversation - Claude TraceHub</PageTitle>
+
+<MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+           OnClick='() => NavigationManager.NavigateTo($"/project/{ProjectDirName}")'>Back to Project</MudButton>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading conversation...</MudText>
+    </div>
+}
+else if (_conversation == null)
+{
+    <MudAlert Severity="Severity.Error" Class="mt-4">Conversation not found.</MudAlert>
+}
+else
+{
+    @* Header *@
+    <MudPaper Elevation="1" Class="pa-4 mt-2 mb-4 conversation-header">
+        <div class="d-flex justify-space-between align-center mb-3">
+            <div>
+                <MudText Typo="Typo.h5">Conversation</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">Session: @_conversation.SessionId</MudText>
+            </div>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Download"
+                       OnClick="ExportToExcel" Disabled="_exporting">
+                @if (_exporting)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Exporting...</span>
+                }
+                else
+                {
+                    <span>Export to Excel</span>
+                }
+            </MudButton>
+        </div>
+        <MudGrid>
+            <MudItem xs="6" sm="3">
+                <MudText Typo="Typo.caption">Project</MudText>
+                <MudText Typo="Typo.body2"><b>@_conversation.ProjectName</b></MudText>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudText Typo="Typo.caption">Started On</MudText>
+                <MudText Typo="Typo.body2">@(_conversation.Created?.ToString("yyyy-MM-dd HH:mm") ?? "-")</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4" Style="min-width: 0; overflow: hidden;">
+                <MudText Typo="Typo.caption">Branch</MudText>
+                <div>
+                    @if (!string.IsNullOrEmpty(_conversation.GitBranch) && AzureDevOpsService.IsConfigured)
+                    {
+                        <MudTooltip Text="@($"Click to view TFS work items for: {_conversation.GitBranch}")">
+                            <MudLink Typo="Typo.body2" Class="header-branch-text"
+                                     OnClick="() => ShowWorkItems(_conversation.GitBranch)"
+                                     Disabled="_loadingWorkItems">
+                                @if (_loadingWorkItems)
+                                {
+                                    <MudProgressCircular Size="Size.Small" Indeterminate="true"
+                                                         Style="width: 14px; height: 14px;" Class="mr-1" />
+                                }
+                                <MudIcon Icon="@Icons.Material.Filled.AccountTree" Size="Size.Small"
+                                         Class="mr-1" Style="font-size: 14px;" />
+                                @TruncateBranch(_conversation.GitBranch)
+                            </MudLink>
+                        </MudTooltip>
+                    }
+                    else
+                    {
+                        <MudTooltip Text="@(_conversation.GitBranch ?? "-")">
+                            <MudText Typo="Typo.body2" Class="header-branch-text">@TruncateBranch(_conversation.GitBranch)</MudText>
+                        </MudTooltip>
+                    }
+                </div>
+            </MudItem>
+            <MudItem xs="6" sm="2">
+                <MudText Typo="Typo.caption">Messages</MudText>
+                <MudText Typo="Typo.body2">@_conversation.Messages.Count</MudText>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @* Files Touched *@
+    @if (_filesTouched.Count > 0)
+    {
+        <MudExpansionPanels Class="mb-4" Elevation="1">
+            <MudExpansionPanel>
+                <TitleContent>
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small" />
+                        <MudText Typo="Typo.subtitle1"><b>Files Touched (@_filesTouched.Count)</b></MudText>
+                        @if (_createdFiles.Count > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">@_createdFiles.Count created</MudChip>
+                        }
+                        @if (_modifiedFiles.Count > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">@_modifiedFiles.Count modified</MudChip>
+                        }
+                    </div>
+                </TitleContent>
+                <ChildContent>
+                    @if (_createdFiles.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.NoteAdd" Size="Size.Small" Class="mr-1" Style="color: #4CAF50;" />
+                                Created (@_createdFiles.Count)
+                            </div>
+                            @foreach (var f in _createdFiles)
+                            {
+                                <div class="file-item created clickable" @onclick="() => ShowFileChanges(f.FilePath)">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        @if (f.Count > 1)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                        }
+                                        <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" Color="Color.Secondary" Class="file-item-arrow" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (_modifiedFiles.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.EditNote" Size="Size.Small" Class="mr-1" Style="color: #FF9800;" />
+                                Modified (@_modifiedFiles.Count)
+                            </div>
+                            @foreach (var f in _modifiedFiles)
+                            {
+                                <div class="file-item modified clickable" @onclick="() => ShowFileChanges(f.FilePath)">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        @if (f.Count > 1)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                        }
+                                        <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" Color="Color.Secondary" Class="file-item-arrow" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (_readFiles.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Class="mr-1" Style="color: #2196F3;" />
+                                Read (@_readFiles.Count)
+                            </div>
+                            @foreach (var f in _readFiles)
+                            {
+                                <div class="file-item read clickable" @onclick="() => ShowFileChanges(f.FilePath)">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        @if (f.Count > 1)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                        }
+                                        <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Small" Color="Color.Secondary" Class="file-item-arrow" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </ChildContent>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+
+    @* Messages *@
+    <div class="message-thread">
+        @foreach (var msg in _conversation.Messages)
+        {
+            <div class="message-wrapper">
+                <div class="message-avatar @msg.Role">
+                    @(msg.Role == "user" ? "Y" : "C")
+                </div>
+                <div class="message-bubble @msg.Role">
+                    <div class="message-role @msg.Role">
+                        @(msg.Role == "user" ? "You" : "Claude")
+                    </div>
+                    <div class="markdown-body">@((MarkupString)RenderMarkdown(msg.Text))</div>
+
+                    @if (msg.ToolUsages.Count > 0)
+                    {
+                        <MudExpansionPanels Class="mt-2" Elevation="0">
+                            <MudExpansionPanel Text="@($"Tools Used ({msg.ToolUsages.Count})")" Dense="true"
+                                               Style="background: transparent; font-size: 12px;">
+                                @foreach (var tool in msg.ToolUsages)
+                                {
+                                    <MudText Typo="Typo.body2" Style="font-size: 12px;">
+                                        <b>@tool.ToolName</b>: @tool.Summary
+                                    </MudText>
+                                }
+                            </MudExpansionPanel>
+                        </MudExpansionPanels>
+                    }
+
+                    <div class="message-meta">
+                        @msg.Timestamp.ToString("yyyy-MM-dd HH:mm:ss")
+                        @if (!string.IsNullOrEmpty(msg.Model))
+                        {
+                            <span> | @msg.Model</span>
+                        }
+                        @if (msg.OutputTokens.HasValue)
+                        {
+                            <span> | @msg.OutputTokens tokens</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string ProjectDirName { get; set; } = "";
+    [Parameter] public string SessionId { get; set; } = "";
+
+    private static readonly MarkdownPipeline _markdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .Build();
+
+    private bool _loading = true;
+    private bool _exporting;
+    private bool _loadingWorkItems;
+    private bool _disposed;
+    private Conversation? _conversation;
+    private List<FileTouchedInfo> _filesTouched = new();
+    private List<FileTouchedInfo> _createdFiles = new();
+    private List<FileTouchedInfo> _modifiedFiles = new();
+    private List<FileTouchedInfo> _readFiles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        await LoadConversationAsync();
+        _loading = false;
+    }
+
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await LoadConversationAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadConversationAsync()
+    {
+        await Task.Run(() =>
+        {
+            var filePath = DiscoveryService.GetJsonlFilePath(ProjectDirName, SessionId);
+            if (filePath != null)
+            {
+                var projects = DiscoveryService.GetAllProjects();
+                var proj = projects.FirstOrDefault(p => p.DirName == ProjectDirName);
+                var projectName = proj?.ProjectName ?? ProjectDirName;
+
+                _conversation = CacheService.GetOrParse(filePath, projectName, ProjectDirName);
+
+                if (_conversation != null)
+                {
+                    _filesTouched = _conversation.FilesTouched;
+                    _createdFiles = _filesTouched.Where(f => f.Action == FileActionType.Created).ToList();
+                    _modifiedFiles = _filesTouched.Where(f => f.Action == FileActionType.Modified).ToList();
+                    _readFiles = _filesTouched.Where(f => f.Action == FileActionType.Read).ToList();
+                }
+            }
+        });
+    }
+
+    private async Task ShowFileChanges(string filePath)
+    {
+        if (_conversation == null) return;
+
+        var timeline = _conversation.GetFileTimeline(filePath);
+        if (timeline.Changes.Count == 0) return;
+
+        var parameters = new DialogParameters<FileChangeDialog>
+        {
+            { x => x.Timeline, timeline }
+        };
+
+        var options = new DialogOptions
+        {
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true,
+            CloseOnEscapeKey = true
+        };
+
+        await DialogService.ShowAsync<FileChangeDialog>(
+            $"Changes: {Path.GetFileName(filePath)}", parameters, options);
+    }
+
+    private async Task ShowWorkItems(string branchName)
+    {
+        if (string.IsNullOrEmpty(branchName) || _loadingWorkItems) return;
+
+        _loadingWorkItems = true;
+        StateHasChanged();
+
+        try
+        {
+            var result = await AzureDevOpsService.GetWorkItemsForBranchAsync(branchName);
+
+            var parameters = new DialogParameters<TfsWorkItemsDialog>
+            {
+                { x => x.Result, result }
+            };
+
+            var options = new DialogOptions
+            {
+                MaxWidth = MaxWidth.Medium,
+                FullWidth = true,
+                CloseOnEscapeKey = true
+            };
+
+            await DialogService.ShowAsync<TfsWorkItemsDialog>(
+                "TFS Work Items", parameters, options);
+        }
+        finally
+        {
+            _loadingWorkItems = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ExportToExcel()
+    {
+        if (_conversation == null) return;
+
+        _exporting = true;
+        StateHasChanged();
+
+        try
+        {
+            var bytes = await Task.Run(() => ExcelService.ExportConversation(_conversation));
+            var fileName = $"conversation_{SessionId[..Math.Min(8, SessionId.Length)]}_{DateTime.Now:yyyyMMdd}.xlsx";
+            await JS.InvokeVoidAsync("downloadFile", fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+        }
+        finally
+        {
+            _exporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string TruncateBranch(string? branch, int max = 45)
+    {
+        if (string.IsNullOrEmpty(branch)) return "-";
+        return branch.Length <= max ? branch : branch[..max] + "...";
+    }
+
+    private static string RenderMarkdown(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        return Markdown.ToHtml(text, _markdownPipeline);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}

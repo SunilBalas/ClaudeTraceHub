@@ -1,0 +1,134 @@
+@page "/project/{ProjectDirName}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject ClaudeDataDiscoveryService DiscoveryService
+@inject NavigationManager NavigationManager
+@inject DataRefreshService RefreshService
+
+<PageTitle>Project - Claude TraceHub</PageTitle>
+
+<MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+           OnClick='() => NavigationManager.NavigateTo("/projects")'>Back to Projects</MudButton>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading sessions...</MudText>
+    </div>
+}
+else
+{
+    <MudText Typo="Typo.h4" Class="mt-2 mb-1">@_projectName</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">@_projectPath</MudText>
+
+    @if (_sessions.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info">No conversations found for this project.</MudAlert>
+    }
+    else
+    {
+        <MudTable Items="@_sessions" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
+                  OnRowClick="@OnRowClick" T="SessionSummary" RowClass="cursor-pointer"
+                  Filter="new Func<SessionSummary, bool>(FilterFunc)">
+            <ToolBarContent>
+                <MudText Typo="Typo.h6">@_sessions.Count Conversation(s)</MudText>
+                <MudSpacer />
+                <MudTextField @bind-Value="_searchString" Placeholder="Search..." Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0" />
+            </ToolBarContent>
+            <HeaderContent>
+                <MudTh>#</MudTh>
+                <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<SessionSummary, object>(x => x.Created ?? DateTime.MinValue)">Date</MudTableSortLabel></MudTh>
+                <MudTh>Messages</MudTh>
+                <MudTh>Git Branch</MudTh>
+                <MudTh>First Prompt</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@(_sessions.IndexOf(context) + 1)</MudTd>
+                <MudTd DataLabel="Date">@(context.Created?.ToString("yyyy-MM-dd HH:mm") ?? "-")</MudTd>
+                <MudTd DataLabel="Messages">@context.MessageCount</MudTd>
+                <MudTd DataLabel="Branch">@(context.GitBranch ?? "-")</MudTd>
+                <MudTd DataLabel="Prompt">@Truncate(context.FirstPrompt, 80)</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    [Parameter] public string ProjectDirName { get; set; } = "";
+
+    private bool _loading = true;
+    private bool _disposed;
+    private string _projectName = "";
+    private string _projectPath = "";
+    private List<SessionSummary> _sessions = new();
+    private string _searchString = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        await Task.Run(() =>
+        {
+            _sessions = DiscoveryService.GetSessionsForProject(ProjectDirName);
+            if (_sessions.Count > 0)
+            {
+                _projectName = _sessions[0].ProjectName;
+            }
+            var projects = DiscoveryService.GetAllProjects();
+            var proj = projects.FirstOrDefault(p => p.DirName == ProjectDirName);
+            if (proj != null)
+            {
+                _projectPath = proj.ProjectPath;
+                _projectName = proj.ProjectName;
+            }
+        });
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<SessionSummary> args)
+    {
+        if (args.Item != null)
+            NavigationManager.NavigateTo($"/conversation/{ProjectDirName}/{args.Item.SessionId}");
+    }
+
+    private bool FilterFunc(SessionSummary session)
+    {
+        if (string.IsNullOrWhiteSpace(_searchString)) return true;
+        return session.FirstPrompt.Contains(_searchString, StringComparison.OrdinalIgnoreCase)
+            || (session.GitBranch?.Contains(_searchString, StringComparison.OrdinalIgnoreCase) ?? false)
+            || session.SessionId.Contains(_searchString, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Truncate(string text, int max)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}

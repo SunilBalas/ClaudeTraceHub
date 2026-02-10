@@ -1,0 +1,397 @@
+@page "/settings"
+@rendermode InteractiveServer
+@inject IOptionsSnapshot<AzureDevOpsSettings> CurrentSettings
+@inject AzureDevOpsService AzureDevOpsService
+@inject SettingsService SettingsService
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+
+<PageTitle>Settings - Claude TraceHub</PageTitle>
+
+<div class="page-content">
+    @if (_isFirstRun)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Filled" Class="mb-4 setup-welcome-alert"
+                  Icon="@Icons.Material.Filled.WavingHand" NoIcon="false">
+            <MudText Typo="Typo.subtitle1"><b>Welcome to Claude TraceHub!</b></MudText>
+            <MudText Typo="Typo.body2">
+                Enter your Azure DevOps URL and PAT, then click
+                <b>Test URL</b> to load your projects.
+            </MudText>
+        </MudAlert>
+    }
+
+    <MudText Typo="Typo.h4" Class="mb-2">Settings</MudText>
+    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+        Configure Azure DevOps / TFS integration settings
+    </MudText>
+
+    <MudPaper Elevation="2" Class="pa-6" Style="max-width: 720px; overflow: visible;">
+        <MudText Typo="Typo.h6" Class="mb-4">
+            <MudIcon Icon="@Icons.Material.Filled.Cloud" Class="mr-2" Style="vertical-align: middle;" />
+            Azure DevOps Connection
+        </MudText>
+
+        @* Required fields checklist *@
+        @if (_isFirstRun)
+        {
+            <MudPaper Elevation="0" Class="pa-3 mb-4" Style="border-radius: 8px; border: 1px dashed var(--mud-palette-primary);">
+                <MudText Typo="Typo.caption" Color="Color.Primary" Class="mb-2"><b>REQUIRED TO GET STARTED</b></MudText>
+                <div class="d-flex flex-column gap-1">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@(_hasUrl ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                 Color="@(_hasUrl ? Color.Success : Color.Default)" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Color="@(_hasUrl ? Color.Success : Color.Secondary)">Organization URL</MudText>
+                    </div>
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@(_hasPat ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                 Color="@(_hasPat ? Color.Success : Color.Default)" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Color="@(_hasPat ? Color.Success : Color.Secondary)">Personal Access Token</MudText>
+                    </div>
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@(_orgVerified ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                 Color="@(_orgVerified ? Color.Success : Color.Default)" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Color="@(_orgVerified ? Color.Success : Color.Secondary)">URL verified</MudText>
+                    </div>
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@(_hasProjects ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                 Color="@(_hasProjects ? Color.Success : Color.Default)" Size="Size.Small" />
+                        <MudText Typo="Typo.body2" Color="@(_hasProjects ? Color.Success : Color.Secondary)">At least one project selected</MudText>
+                    </div>
+                </div>
+            </MudPaper>
+        }
+
+        @* Organization URL *@
+        <MudTextField Value="_organizationUrl"
+                      ValueChanged="OnOrgUrlChanged"
+                      T="string"
+                      Label="Organization URL"
+                      Placeholder="https://dev.azure.com/yourorg/ or https://tfs.example.com/tfs/Collection/"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Link"
+                      Class="mb-4"
+                      Error="@(!string.IsNullOrEmpty(_orgError))"
+                      ErrorText="@_orgError"
+                      HelperText="The full URL to your Azure DevOps organization or TFS collection" />
+
+        @* PAT *@
+        <MudTextField Value="_personalAccessToken"
+                      ValueChanged="OnPatChanged"
+                      T="string"
+                      Label="Personal Access Token (PAT)"
+                      Variant="Variant.Outlined"
+                      Immediate="true"
+                      InputType="@_patInputType"
+                      Adornment="Adornment.End"
+                      AdornmentIcon="@_patVisibilityIcon"
+                      OnAdornmentClick="TogglePatVisibility"
+                      Class="mb-2"
+                      Error="@(!string.IsNullOrEmpty(_patError))"
+                      ErrorText="@_patError"
+                      HelperText="A PAT with read access to Code and Work Items" />
+
+        @* Test URL button *@
+        <div class="d-flex align-center gap-3 mb-4">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.NetworkCheck"
+                       OnClick="VerifyUrl" Disabled="@(_verifying || !_hasUrl || !_hasPat)">
+                @if (_verifying)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Verifying...</span>
+                }
+                else
+                {
+                    <span>Test URL</span>
+                }
+            </MudButton>
+            @if (_showVerifySuccess)
+            {
+                <div class="d-flex align-center gap-1">
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                    <MudText Typo="Typo.body2" Color="Color.Success">
+                        Connected &mdash; @_availableProjects.Count project(s) found
+                    </MudText>
+                </div>
+            }
+        </div>
+
+        <MudDivider Class="mb-4" />
+
+        @* Projects section *@
+        <MudText Typo="Typo.subtitle2" Class="mb-2">
+            Projects
+            @if (_orgVerified && !_hasProjects)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Error" Class="ml-2" Style="display: inline;">
+                    (select at least one)
+                </MudText>
+            }
+        </MudText>
+
+        @if (!_orgVerified)
+        {
+            <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4" NoIcon="false"
+                      Icon="@Icons.Material.Filled.Info">
+                Verify your Organization URL first to load available projects.
+            </MudAlert>
+        }
+        else
+        {
+            <MudSelect T="string" MultiSelection="true"
+                       SelectedValues="_selectedProjects"
+                       SelectedValuesChanged="OnProjectSelectionChanged"
+                       Label="Select projects"
+                       Variant="Variant.Outlined"
+                       Class="mb-4"
+                       Adornment="Adornment.Start"
+                       AdornmentIcon="@Icons.Material.Filled.Folder"
+                       AnchorOrigin="Origin.BottomLeft"
+                       TransformOrigin="Origin.TopLeft">
+                @foreach (var project in _availableProjects)
+                {
+                    <MudSelectItem T="string" Value="@project">@project</MudSelectItem>
+                }
+            </MudSelect>
+        }
+
+        @* Save button *@
+        <div class="mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Save"
+                       OnClick="SaveSettings"
+                       Disabled="@(_saving || !_orgVerified || !_hasProjects)">
+                @if (_saving)
+                {
+                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>Save Settings</span>
+                }
+            </MudButton>
+        </div>
+
+        @* Save success *@
+        @if (_saveSuccess)
+        {
+            <MudAlert Severity="Severity.Success" Class="mt-4" Variant="Variant.Outlined"
+                      Icon="@Icons.Material.Filled.CheckCircle">
+                Settings saved successfully!
+            </MudAlert>
+        }
+    </MudPaper>
+</div>
+
+@code {
+    private string _organizationUrl = "";
+    private string _personalAccessToken = "";
+    private List<string> _availableProjects = new();
+    private IEnumerable<string> _selectedProjects = new HashSet<string>();
+    private bool _orgVerified;
+    private bool _showVerifySuccess;
+    private bool _verifying;
+    private bool _saving;
+    private bool _saveSuccess;
+    private bool _patVisible;
+    private bool _isFirstRun;
+
+    private string? _orgError;
+    private string? _patError;
+
+    private bool _hasUrl => !string.IsNullOrWhiteSpace(_organizationUrl);
+    private bool _hasPat => !string.IsNullOrWhiteSpace(_personalAccessToken);
+    private bool _hasProjects => _selectedProjects.Any();
+
+    private InputType _patInputType => _patVisible ? InputType.Text : InputType.Password;
+    private string _patVisibilityIcon => _patVisible
+        ? Icons.Material.Filled.VisibilityOff
+        : Icons.Material.Filled.Visibility;
+
+    protected override void OnInitialized()
+    {
+        var settings = CurrentSettings.Value;
+        _isFirstRun = !settings.IsConfigured;
+        _organizationUrl = settings.OrganizationUrl;
+        _personalAccessToken = settings.PersonalAccessToken;
+        _selectedProjects = new HashSet<string>(settings.Projects);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_isFirstRun && _hasUrl && _hasPat)
+        {
+            await VerifyUrl();
+        }
+    }
+
+    private void OnOrgUrlChanged(string value)
+    {
+        _organizationUrl = value;
+        _orgError = null;
+        _orgVerified = false;
+        _showVerifySuccess = false;
+        _availableProjects.Clear();
+        _selectedProjects = new HashSet<string>();
+        _saveSuccess = false;
+    }
+
+    private void OnPatChanged(string value)
+    {
+        _personalAccessToken = value;
+        _patError = null;
+        _orgVerified = false;
+        _showVerifySuccess = false;
+        _availableProjects.Clear();
+        _selectedProjects = new HashSet<string>();
+        _saveSuccess = false;
+    }
+
+    private async Task VerifyUrl()
+    {
+        _orgError = null;
+        _patError = null;
+        _verifying = true;
+        _orgVerified = false;
+        _saveSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var result = await AzureDevOpsService.VerifyAndFetchProjectsAsync(
+                _organizationUrl.Trim(), _personalAccessToken.Trim());
+
+            if (result.Success)
+            {
+                _orgVerified = true;
+                _showVerifySuccess = true;
+                _availableProjects = result.Projects;
+
+                // Pre-select any previously saved projects that still exist
+                var saved = new HashSet<string>(_selectedProjects);
+                _selectedProjects = new HashSet<string>(
+                    _availableProjects.Where(p => saved.Contains(p)));
+
+                _ = DismissAfterDelay(() => _showVerifySuccess = false);
+            }
+            else
+            {
+                MapErrorToField(result.Message);
+            }
+        }
+        catch (Exception)
+        {
+            _orgError = "Unable to reach the server. Check the URL and your network.";
+        }
+        finally
+        {
+            _verifying = false;
+            StateHasChanged();
+        }
+    }
+
+    private void MapErrorToField(string rawMessage)
+    {
+        if (rawMessage.Contains("401") || rawMessage.Contains("Unauthorized", StringComparison.OrdinalIgnoreCase))
+        {
+            _orgError = "Verify this URL is correct.";
+            _patError = "Or check that your token is correct and has not expired.";
+            return;
+        }
+
+        if (rawMessage.Contains("403") || rawMessage.Contains("Forbidden", StringComparison.OrdinalIgnoreCase))
+        {
+            _patError = "Access denied. Your token may lack permissions for Code and Work Items.";
+            return;
+        }
+
+        if (rawMessage.Contains("could not be resolved", StringComparison.OrdinalIgnoreCase)
+            || rawMessage.Contains("No such host", StringComparison.OrdinalIgnoreCase))
+        {
+            _orgError = "Could not reach the server. Check the URL and your network connection.";
+            return;
+        }
+
+        if (rawMessage.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+            || rawMessage.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+        {
+            _orgError = "Connection timed out. The server may be unreachable. Please try again.";
+            return;
+        }
+
+        if (rawMessage.Contains("SSL") || rawMessage.Contains("certificate", StringComparison.OrdinalIgnoreCase))
+        {
+            _orgError = "Security certificate issue. Your organization may require specific network settings.";
+            return;
+        }
+
+        _orgError = "Connection failed. Double-check the URL and try again.";
+    }
+
+    private void OnProjectSelectionChanged(IEnumerable<string> values)
+    {
+        _selectedProjects = values;
+        _saveSuccess = false;
+    }
+
+    private async Task SaveSettings()
+    {
+        _saving = true;
+        _saveSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var settings = new AzureDevOpsSettings
+            {
+                OrganizationUrl = _organizationUrl.Trim(),
+                PersonalAccessToken = _personalAccessToken.Trim(),
+                Projects = _selectedProjects.ToList()
+            };
+
+            await SettingsService.SaveAzureDevOpsSettingsAsync(settings);
+            _saveSuccess = true;
+            _ = DismissAfterDelay(() => _saveSuccess = false);
+
+            if (_isFirstRun)
+            {
+                Snackbar.Add("You're all set! Redirecting to the Dashboard...", Severity.Success);
+                _isFirstRun = false;
+                StateHasChanged();
+                await Task.Delay(1000);
+                NavigationManager.NavigateTo("/", forceLoad: true);
+            }
+            else
+            {
+                Snackbar.Add("Settings saved!", Severity.Success);
+            }
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("Failed to save settings. Please try again.", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task DismissAfterDelay(Action clear, int ms = 3000)
+    {
+        await Task.Delay(ms);
+        await InvokeAsync(() =>
+        {
+            clear();
+            StateHasChanged();
+        });
+    }
+
+    private void TogglePatVisibility() => _patVisible = !_patVisible;
+}

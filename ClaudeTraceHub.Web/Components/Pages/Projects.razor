@@ -1,0 +1,95 @@
+@page "/projects"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject ClaudeDataDiscoveryService DiscoveryService
+@inject NavigationManager NavigationManager
+@inject DataRefreshService RefreshService
+
+<PageTitle>Projects - Claude TraceHub</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-4">Projects</MudText>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading projects...</MudText>
+    </div>
+}
+else if (_projects.Count == 0)
+{
+    <MudAlert Severity="Severity.Info">No Claude Code projects found. Make sure you have conversations in ~/.claude/projects/</MudAlert>
+}
+else
+{
+    <MudTable Items="@_projects" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
+              OnRowClick="@OnRowClick" T="ClaudeProject" RowClass="cursor-pointer"
+              Filter="new Func<ClaudeProject, bool>(FilterFunc)">
+        <ToolBarContent>
+            <MudTextField @bind-Value="_searchString" Placeholder="Search projects..." Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Medium" Class="mt-0" />
+        </ToolBarContent>
+        <HeaderContent>
+            <MudTh><MudTableSortLabel SortBy="new Func<ClaudeProject, object>(x => x.ProjectName)">Project</MudTableSortLabel></MudTh>
+            <MudTh>Path</MudTh>
+            <MudTh><MudTableSortLabel SortBy="new Func<ClaudeProject, object>(x => x.SessionCount)">Sessions</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel SortBy="new Func<ClaudeProject, object>(x => x.TotalMessages)">Messages</MudTableSortLabel></MudTh>
+            <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<ClaudeProject, object>(x => x.LastActivity ?? DateTime.MinValue)">Last Activity</MudTableSortLabel></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Project"><MudText Typo="Typo.body1"><b>@context.ProjectName</b></MudText></MudTd>
+            <MudTd DataLabel="Path"><MudText Typo="Typo.body2" Color="Color.Secondary">@context.ProjectPath</MudText></MudTd>
+            <MudTd DataLabel="Sessions">@context.SessionCount</MudTd>
+            <MudTd DataLabel="Messages">@context.TotalMessages</MudTd>
+            <MudTd DataLabel="Last Activity">@(context.LastActivity?.ToString("yyyy-MM-dd HH:mm") ?? "-")</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _disposed;
+    private List<ClaudeProject> _projects = new();
+    private string _searchString = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        await Task.Run(() => { _projects = DiscoveryService.GetAllProjects(); });
+        _loading = false;
+    }
+
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await Task.Run(() => { _projects = DiscoveryService.GetAllProjects(); });
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<ClaudeProject> args)
+    {
+        if (args.Item != null)
+            NavigationManager.NavigateTo($"/project/{args.Item.DirName}");
+    }
+
+    private bool FilterFunc(ClaudeProject project)
+    {
+        if (string.IsNullOrWhiteSpace(_searchString)) return true;
+        return project.ProjectName.Contains(_searchString, StringComparison.OrdinalIgnoreCase)
+            || project.ProjectPath.Contains(_searchString, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}

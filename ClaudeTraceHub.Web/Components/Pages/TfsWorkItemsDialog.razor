@@ -1,0 +1,246 @@
+@using ClaudeTraceHub.Web.Models
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.BugReport" Size="Size.Small"
+                     Color="Color.Primary" />
+            <MudText Typo="Typo.h6" Style="font-size: 14px; font-weight: 600;">
+                TFS Work Items
+            </MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @* Branch info bar *@
+        <div class="tfs-branch-info">
+            <MudIcon Icon="@Icons.Material.Filled.AccountTree" Size="Size.Small" Class="mr-2" />
+            <span class="tfs-branch-name">@Result.BranchName</span>
+        </div>
+
+        @if (!Result.Success)
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-3">
+                @Result.ErrorMessage
+            </MudAlert>
+
+            @* Show discovery notes even on error for debugging *@
+            @if (Result.DiscoveryNotes.Count > 0)
+            {
+                <MudExpansionPanels Class="mt-3" Elevation="0">
+                    <MudExpansionPanel Text="Discovery Log" Dense="true"
+                                       Style="background: transparent; font-size: 12px;">
+                        @foreach (var note in Result.DiscoveryNotes)
+                        {
+                            <MudText Typo="Typo.body2" Style="font-size: 12px;" Color="Color.Secondary">@note</MudText>
+                        }
+                    </MudExpansionPanel>
+                </MudExpansionPanels>
+            }
+        }
+        else if (Result.AllWorkItems.Count == 0)
+        {
+            <MudAlert Severity="Severity.Info" Class="mt-3" Variant="Variant.Outlined">
+                <div class="d-flex align-center gap-2">
+                    <MudIcon Icon="@Icons.Material.Filled.SearchOff" Size="Size.Small" />
+                    <span>No work items are associated with this branch.</span>
+                </div>
+                @if (Result.ExtractedWorkItemIds.Count > 0)
+                {
+                    <MudText Typo="Typo.body2" Class="mt-2" Color="Color.Secondary">
+                        Searched for work item IDs: @string.Join(", ", Result.ExtractedWorkItemIds)
+                    </MudText>
+                }
+                <MudText Typo="Typo.body2" Class="mt-1" Color="Color.Secondary">
+                    Also searched pull requests across configured projects.
+                </MudText>
+            </MudAlert>
+
+            @RenderDiscoveryLog()
+        }
+        else
+        {
+            @* Discovery path indicator *@
+            <MudAlert Severity="Severity.Success" Class="mt-3" Variant="Variant.Outlined" Dense="true">
+                @switch (Result.Path)
+                {
+                    case DiscoveryPath.LinkedViaPullRequest:
+                        <span>Found via pull request — work items already linked to this branch's PR(s).</span>
+                        break;
+                    case DiscoveryPath.ExtractedFromBranchName:
+                        <span>Found via branch name — extracted work item ID(s): @string.Join(", ", Result.ExtractedWorkItemIds)</span>
+                        break;
+                }
+            </MudAlert>
+
+            @* Summary chips *@
+            <div class="d-flex align-center gap-2 mt-3 mb-3 flex-wrap">
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary"
+                         Variant="Variant.Filled">
+                    @Result.AllWorkItems.Count total
+                </MudChip>
+                @if (Result.Requirements.Count > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info"
+                             Variant="Variant.Outlined">
+                        @Result.Requirements.Count requirement(s)
+                    </MudChip>
+                }
+                @if (Result.ChangeRequests.Count > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning"
+                             Variant="Variant.Outlined">
+                        @Result.ChangeRequests.Count change request(s)
+                    </MudChip>
+                }
+                @if (Result.Bugs.Count > 0)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error"
+                             Variant="Variant.Outlined">
+                        @Result.Bugs.Count bug(s)
+                    </MudChip>
+                }
+            </div>
+
+            @* Requirements *@
+            @if (Result.Requirements.Count > 0)
+            {
+                <div class="tfs-group">
+                    <div class="tfs-group-header">
+                        <MudIcon Icon="@Icons.Material.Filled.Assignment"
+                                 Size="Size.Small" Class="mr-1" Style="color: #2196F3;" />
+                        Requirements (@Result.Requirements.Count)
+                    </div>
+                    @foreach (var item in Result.Requirements)
+                    {
+                        @RenderWorkItem(item)
+                    }
+                </div>
+            }
+
+            @* Change Requests / Tasks *@
+            @if (Result.ChangeRequests.Count > 0)
+            {
+                <div class="tfs-group">
+                    <div class="tfs-group-header">
+                        <MudIcon Icon="@Icons.Material.Filled.ChangeCircle"
+                                 Size="Size.Small" Class="mr-1" Style="color: #FF9800;" />
+                        Change Requests / Tasks (@Result.ChangeRequests.Count)
+                    </div>
+                    @foreach (var item in Result.ChangeRequests)
+                    {
+                        @RenderWorkItem(item)
+                    }
+                </div>
+            }
+
+            @* Bugs *@
+            @if (Result.Bugs.Count > 0)
+            {
+                <div class="tfs-group">
+                    <div class="tfs-group-header">
+                        <MudIcon Icon="@Icons.Material.Filled.BugReport"
+                                 Size="Size.Small" Class="mr-1" Style="color: #f44336;" />
+                        Bugs (@Result.Bugs.Count)
+                    </div>
+                    @foreach (var item in Result.Bugs)
+                    {
+                        @RenderWorkItem(item)
+                    }
+                </div>
+            }
+
+            @* Other *@
+            @if (Result.Other.Count > 0)
+            {
+                <div class="tfs-group">
+                    <div class="tfs-group-header">
+                        <MudIcon Icon="@Icons.Material.Filled.Folder"
+                                 Size="Size.Small" Class="mr-1" Style="color: #9E9E9E;" />
+                        Other (@Result.Other.Count)
+                    </div>
+                    @foreach (var item in Result.Other)
+                    {
+                        @RenderWorkItem(item)
+                    }
+                </div>
+            }
+
+            @RenderDiscoveryLog()
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public TfsQueryResult Result { get; set; } = new();
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private RenderFragment RenderDiscoveryLog() => __builder =>
+    {
+        if (Result.DiscoveryNotes.Count > 0)
+        {
+            <MudExpansionPanels Class="mt-3" Elevation="0">
+                <MudExpansionPanel Text="Discovery Log" Dense="true"
+                                   Style="background: transparent; font-size: 12px;">
+                    @foreach (var note in Result.DiscoveryNotes)
+                    {
+                        <MudText Typo="Typo.body2" Style="font-size: 12px;" Color="Color.Secondary">@note</MudText>
+                    }
+                </MudExpansionPanel>
+            </MudExpansionPanels>
+        }
+    };
+
+    private RenderFragment RenderWorkItem(TfsWorkItem item) => __builder =>
+    {
+        <div class="tfs-work-item">
+            <div class="tfs-work-item-header">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                         Color="@GetTypeColor(item.WorkItemType)"
+                         Style="font-size: 10px;">@item.WorkItemType</MudChip>
+                <a href="@item.Url" target="_blank" class="tfs-work-item-id">
+                    #@item.Id
+                </a>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                         Color="@GetStateColor(item.State)"
+                         Style="font-size: 10px;">@item.State</MudChip>
+            </div>
+            <div class="tfs-work-item-title">@item.Title</div>
+            <div class="tfs-work-item-meta">
+                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
+                         Style="font-size: 14px;" Class="mr-1" />
+                <span>@item.AssignedTo</span>
+                @if (!string.IsNullOrEmpty(item.ProjectName))
+                {
+                    <span class="ml-3">
+                        <MudIcon Icon="@Icons.Material.Filled.Folder" Size="Size.Small"
+                                 Style="font-size: 14px;" Class="mr-1" />
+                        @item.ProjectName
+                    </span>
+                }
+            </div>
+        </div>
+    };
+
+    private static Color GetTypeColor(string workItemType) => workItemType.ToLower() switch
+    {
+        var t when t.Contains("requirement") || t.Contains("user story") || t.Contains("product backlog") => Color.Info,
+        var t when t.Contains("bug") => Color.Error,
+        var t when t.Contains("change request") || t.Contains("task") => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color GetStateColor(string state) => state.ToLower() switch
+    {
+        "new" or "proposed" => Color.Default,
+        "active" or "committed" or "in progress" => Color.Info,
+        "resolved" or "done" => Color.Success,
+        "closed" => Color.Success,
+        "removed" => Color.Error,
+        _ => Color.Default
+    };
+}

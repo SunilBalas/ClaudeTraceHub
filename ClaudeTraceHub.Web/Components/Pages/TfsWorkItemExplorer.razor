@@ -1,0 +1,485 @@
+@page "/tfs-explorer"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject TfsWorkItemFilterService FilterService
+@inject NavigationManager NavigationManager
+
+<PageTitle>TFS Work Item Explorer - Claude TraceHub</PageTitle>
+
+@if (!FilterService.IsConfigured)
+{
+    <MudAlert Severity="Severity.Warning" Class="mt-4">
+        <MudText Typo="Typo.body1"><b>Azure DevOps is not configured.</b></MudText>
+        <MudText Typo="Typo.body2" Class="mt-1">
+            Configure your Organization URL, Personal Access Token, and Projects in the
+            <MudLink Href="/settings">Settings</MudLink> page to enable TFS work item integration.
+        </MudText>
+    </MudAlert>
+}
+else
+{
+    <div class="page-content">
+        <div class="d-flex justify-space-between align-center mb-2">
+            <div>
+                <MudText Typo="Typo.h4">TFS Work Item Explorer</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary">
+                    Filter TFS work items and view associated Claude AI chat history
+                </MudText>
+            </div>
+        </div>
+
+        @* ── Filter Bar ── *@
+        <MudPaper Elevation="1" Class="pa-4 mt-3 mb-4 wi-explorer-filters">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" sm="6" md="2">
+                    <MudTextField @bind-Value="_filterWorkItemId" Label="Work Item ID"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag"
+                                  Immediate="true" Clearable="true" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Disabled="@(!_scanned)" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect @bind-Value="_filterType" Label="Work Item Type"
+                               Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true" AnchorOrigin="Origin.BottomCenter" T="string"
+                               Disabled="@(!_scanned)">
+                        <MudSelectItem T="string" Value="@("requirement")">Requirements</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("changerequest")">Change Requests / Tasks</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("bug")">Bugs</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudTextField @bind-Value="_filterStatus" Label="Status"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Flag"
+                                  Immediate="true" Clearable="true" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Disabled="@(!_scanned)" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudTextField @bind-Value="_filterAssignedTo" Label="Assigned To"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person"
+                                  Immediate="true" Clearable="true" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Disabled="@(!_scanned)" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudTextField @bind-Value="_filterBranch" Label="Branch Name"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AccountTree"
+                                  Immediate="true" Clearable="true" Variant="Variant.Outlined"
+                                  Margin="Margin.Dense" Disabled="@(!_scanned)" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect @bind-Value="_filterLinkStatus" Label="Chat History Link"
+                               Variant="Variant.Outlined" Margin="Margin.Dense"
+                               AnchorOrigin="Origin.BottomCenter" T="string"
+                               Disabled="@(!_scanned)">
+                        <MudSelectItem T="string" Value="@("all")">All</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("linked")">Linked</MudSelectItem>
+                        <MudSelectItem T="string" Value="@("notlinked")">Not Linked</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            <div class="d-flex gap-2 mt-3">
+                @if (!_scanning)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.ManageSearch"
+                               OnClick="StartScan">
+                        Scan All Branches
+                    </MudButton>
+                }
+                else
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Error"
+                               StartIcon="@Icons.Material.Filled.Cancel"
+                               OnClick="CancelScan">
+                        Cancel Scan
+                    </MudButton>
+                }
+                <MudButton Variant="Variant.Text" Color="Color.Secondary"
+                           StartIcon="@Icons.Material.Filled.FilterListOff"
+                           OnClick="ClearFilters" Disabled="@(!_scanned || !HasActiveFilters())">
+                    Clear Filters
+                </MudButton>
+            </div>
+        </MudPaper>
+
+        @* ── Scan Progress ── *@
+        @if (_scanning && _currentProgress != null)
+        {
+            <MudPaper Elevation="0" Class="pa-3 mb-4 wi-scan-progress">
+                <div class="d-flex justify-space-between align-center mb-1">
+                    <MudText Typo="Typo.body2">
+                        Scanning branch @_currentProgress.ScannedBranches of @_currentProgress.TotalBranches...
+                    </MudText>
+                    <MudText Typo="Typo.body2" Color="Color.Primary">
+                        @_currentProgress.WorkItemsFound work item(s) found
+                    </MudText>
+                </div>
+                <MudProgressLinear Value="@_currentProgress.PercentComplete" Color="Color.Primary"
+                                   Rounded="true" Size="Size.Medium" />
+                <MudText Typo="Typo.caption" Color="Color.Secondary" Class="mt-1">
+                    @TruncateBranch(_currentProgress.CurrentBranch, 80)
+                </MudText>
+            </MudPaper>
+        }
+
+        @* ── Results ── *@
+        @if (_scanned && _scanResult != null)
+        {
+            var filtered = GetFilteredWorkItems();
+            var filteredUnlinked = GetFilteredUnlinkedSessions();
+            var showLinked = _filterLinkStatus != "notlinked";
+            var showUnlinked = _filterLinkStatus != "linked";
+            var totalLinkedConversations = filtered.Sum(l => l.LinkedSessions.Count);
+            var hasAnyResults = (showLinked && filtered.Count > 0) || (showUnlinked && filteredUnlinked.Count > 0);
+
+            @* Summary Stats *@
+            <div class="d-flex align-center gap-3 mb-4 flex-wrap">
+                @if (showLinked)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">
+                        @filtered.Count work item(s)
+                    </MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+                        @totalLinkedConversations linked conversation(s)
+                    </MudChip>
+                }
+                @if (showUnlinked)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                        @filteredUnlinked.Count unlinked session(s)
+                    </MudChip>
+                }
+                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                    @_scanResult.TotalBranchesScanned branches scanned
+                </MudChip>
+            </div>
+
+            @* ── Linked Work Items ── *@
+            @if (showLinked && filtered.Count > 0)
+            {
+                @foreach (var link in filtered)
+                {
+                    <MudPaper Elevation="1" Class="@($"pa-4 mb-3 wi-explorer-card {GetTypeClass(link.WorkItem.WorkItemType)}")">
+                        @* Work Item Header *@
+                        <div class="d-flex align-center gap-2 mb-2 flex-wrap">
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                                     Color="@GetTypeColor(link.WorkItem.WorkItemType)"
+                                     Style="font-size: 10px;">
+                                @link.WorkItem.WorkItemType
+                            </MudChip>
+                            <a href="@link.WorkItem.Url" target="_blank" class="tfs-work-item-id">#@link.WorkItem.Id</a>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     Color="@GetStateColor(link.WorkItem.State)"
+                                     Style="font-size: 10px;">
+                                @link.WorkItem.State
+                            </MudChip>
+                            <MudSpacer />
+                            <div class="d-flex align-center" style="font-size: 12px; color: var(--mud-palette-text-secondary);">
+                                <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small"
+                                         Style="font-size: 14px;" Class="mr-1" />
+                                @link.WorkItem.AssignedTo
+                            </div>
+                        </div>
+
+                        @* Title *@
+                        <MudText Typo="Typo.subtitle1" Class="mb-2" Style="font-weight: 500;">
+                            @link.WorkItem.Title
+                        </MudText>
+
+                        @* Branch & Discovery info *@
+                        <div class="d-flex align-center gap-4 mb-3 flex-wrap" style="font-size: 12px;">
+                            <span class="d-flex align-center">
+                                <MudIcon Icon="@Icons.Material.Filled.AccountTree" Size="Size.Small"
+                                         Style="font-size: 14px;" Class="mr-1" />
+                                @string.Join(", ", link.BranchNames.Select(b => TruncateBranch(b, 50)))
+                            </span>
+                            <span style="color: var(--mud-palette-text-secondary);">
+                                Found via @(link.DiscoveryPath == DiscoveryPath.LinkedViaPullRequest ? "Pull Request" : "Branch Name")
+                            </span>
+                        </div>
+
+                        @* Linked Conversations *@
+                        <div class="wi-conv-section">
+                            <MudText Typo="Typo.body2" Class="mb-2"
+                                     Style="font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                <MudIcon Icon="@Icons.Material.Filled.Chat" Size="Size.Small"
+                                         Style="font-size: 14px;" Class="mr-1" />
+                                Linked Chat History (@link.LinkedSessions.Count)
+                            </MudText>
+                            @foreach (var session in link.LinkedSessions)
+                            {
+                                <div class="wi-conv-item" @onclick="() => NavigateToConversation(session)">
+                                    <div class="d-flex align-center gap-2 flex-wrap">
+                                        <MudText Typo="Typo.body2" Style="font-weight: 600; font-size: 13px;">
+                                            @session.ProjectName
+                                        </MudText>
+                                        <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                            @(session.Created?.ToString("yyyy-MM-dd HH:mm") ?? "")
+                                        </MudText>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Style="font-size: 10px;">
+                                            @session.MessageCount msgs
+                                        </MudChip>
+                                    </div>
+                                    <div class="wi-conv-item-prompt">@Truncate(session.FirstPrompt, 120)</div>
+                                </div>
+                            }
+                        </div>
+                    </MudPaper>
+                }
+            }
+
+            @* ── Not-linked empty state for "linked" filter ── *@
+            @if (showLinked && filtered.Count == 0 && HasActiveFilters())
+            {
+                <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.FilterList" Size="Size.Small" />
+                        No work items match the applied filters.
+                    </div>
+                </MudAlert>
+            }
+
+            @* ── Unlinked Sessions ── *@
+            @if (showUnlinked && filteredUnlinked.Count > 0)
+            {
+                <MudText Typo="Typo.h6" Class="mt-4 mb-3" Style="font-size: 15px;">
+                    <MudIcon Icon="@Icons.Material.Filled.LinkOff" Size="Size.Small" Class="mr-1" />
+                    Sessions Without Work Items (@filteredUnlinked.Count)
+                </MudText>
+                <MudPaper Elevation="1" Class="pa-0 mb-4" Style="border-radius: 8px; overflow: hidden;">
+                    <MudTable Items="@filteredUnlinked" Dense="true" Hover="true"
+                              OnRowClick="OnUnlinkedRowClick" T="SessionSummary"
+                              RowClass="cursor-pointer" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>Project</MudTh>
+                            <MudTh>Date</MudTh>
+                            <MudTh>Branch</MudTh>
+                            <MudTh>Msgs</MudTh>
+                            <MudTh>First Prompt</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Project">@Truncate(context.ProjectName, 20)</MudTd>
+                            <MudTd DataLabel="Date">@(context.Created?.ToString("MMM dd HH:mm") ?? "")</MudTd>
+                            <MudTd DataLabel="Branch">@Truncate(context.GitBranch ?? "(none)", 30)</MudTd>
+                            <MudTd DataLabel="Msgs">@context.MessageCount</MudTd>
+                            <MudTd DataLabel="Prompt">@Truncate(context.FirstPrompt, 50)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                </MudPaper>
+            }
+
+            @* ── No results at all ── *@
+            @if (!hasAnyResults)
+            {
+                <MudAlert Severity="Severity.Info" Class="mt-4" Variant="Variant.Outlined">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.SearchOff" Size="Size.Small" />
+                        <span>No chat history is available for the applied filter.</span>
+                    </div>
+                    <MudText Typo="Typo.body2" Class="mt-1" Color="Color.Secondary">
+                        Try adjusting your filter criteria or clearing filters to see all results.
+                    </MudText>
+                </MudAlert>
+            }
+        }
+        else if (!_scanning)
+        {
+            @* ── Not yet scanned ── *@
+            <MudPaper Elevation="0" Class="pa-6 text-center"
+                      Style="border: 2px dashed var(--mud-palette-lines-default); border-radius: 12px;">
+                <MudIcon Icon="@Icons.Material.Filled.ManageSearch" Size="Size.Large" Color="Color.Primary" />
+                <MudText Typo="Typo.h6" Class="mt-3">Scan Branches First</MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
+                    Click <b>Scan All Branches</b> above to discover TFS work items linked to Claude AI chat sessions.
+                </MudText>
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
+                    Filters will become available once the scan is complete.
+                </MudText>
+            </MudPaper>
+        }
+    </div>
+}
+
+@code {
+    // ── Filter state ──
+    private string _filterWorkItemId = "";
+    private string? _filterType;
+    private string _filterStatus = "";
+    private string _filterAssignedTo = "";
+    private string _filterBranch = "";
+    private string _filterLinkStatus = "all";
+
+    // ── Scan state ──
+    private bool _scanning;
+    private bool _scanned;
+    private CancellationTokenSource? _scanCts;
+    private ScanProgress? _currentProgress;
+    private WorkItemScanResult? _scanResult;
+
+    private async Task StartScan()
+    {
+        _scanning = true;
+        _scanned = false;
+        _scanResult = null;
+        _scanCts = new CancellationTokenSource();
+        StateHasChanged();
+
+        var progress = new Progress<ScanProgress>(p =>
+        {
+            _currentProgress = p;
+            InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            _scanResult = await FilterService.ScanAllBranchesAsync(progress, _scanCts.Token);
+            _scanned = true;
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            _scanning = false;
+            _currentProgress = null;
+            StateHasChanged();
+        }
+    }
+
+    private void CancelScan()
+    {
+        _scanCts?.Cancel();
+    }
+
+    private void ClearFilters()
+    {
+        _filterWorkItemId = "";
+        _filterType = null;
+        _filterStatus = "";
+        _filterAssignedTo = "";
+        _filterBranch = "";
+        _filterLinkStatus = "all";
+    }
+
+    // ── Filtering ──
+
+    private List<WorkItemConversationLink> GetFilteredWorkItems()
+    {
+        if (_scanResult == null) return new();
+
+        var items = _scanResult.WorkItemLinks.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(_filterWorkItemId))
+        {
+            var trimmed = _filterWorkItemId.Trim();
+            if (int.TryParse(trimmed, out var exactId))
+                items = items.Where(l => l.WorkItem.Id == exactId);
+            else
+                items = items.Where(l => l.WorkItem.Id.ToString().Contains(trimmed));
+        }
+
+        if (!string.IsNullOrWhiteSpace(_filterType))
+            items = items.Where(l => MatchesTypeCategory(l.WorkItem.WorkItemType, _filterType));
+
+        if (!string.IsNullOrWhiteSpace(_filterStatus))
+            items = items.Where(l => l.WorkItem.State.Contains(_filterStatus.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_filterAssignedTo))
+            items = items.Where(l => l.WorkItem.AssignedTo.Contains(_filterAssignedTo.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrWhiteSpace(_filterBranch))
+            items = items.Where(l => l.BranchNames.Any(b => b.Contains(_filterBranch.Trim(), StringComparison.OrdinalIgnoreCase)));
+
+        return items.ToList();
+    }
+
+    private List<SessionSummary> GetFilteredUnlinkedSessions()
+    {
+        if (_scanResult == null) return new();
+
+        var sessions = _scanResult.UnlinkedSessions.AsEnumerable();
+
+        if (!string.IsNullOrWhiteSpace(_filterBranch))
+            sessions = sessions.Where(s => (s.GitBranch ?? "").Contains(_filterBranch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        return sessions.ToList();
+    }
+
+    private bool HasActiveFilters()
+    {
+        return !string.IsNullOrWhiteSpace(_filterWorkItemId)
+               || !string.IsNullOrWhiteSpace(_filterType)
+               || !string.IsNullOrWhiteSpace(_filterStatus)
+               || !string.IsNullOrWhiteSpace(_filterAssignedTo)
+               || !string.IsNullOrWhiteSpace(_filterBranch)
+               || _filterLinkStatus != "all";
+    }
+
+    // ── Navigation ──
+
+    private void NavigateToConversation(SessionSummary session)
+    {
+        NavigationManager.NavigateTo($"/conversation/{session.ProjectDirName}/{session.SessionId}");
+    }
+
+    private void OnUnlinkedRowClick(TableRowClickEventArgs<SessionSummary> args)
+    {
+        if (args.Item != null)
+            NavigateToConversation(args.Item);
+    }
+
+    // ── Helpers ──
+
+    private static bool MatchesTypeCategory(string workItemType, string category) => category switch
+    {
+        "requirement" => workItemType.Contains("Requirement", StringComparison.OrdinalIgnoreCase)
+                         || workItemType.Contains("User Story", StringComparison.OrdinalIgnoreCase)
+                         || workItemType.Contains("Product Backlog", StringComparison.OrdinalIgnoreCase),
+        "changerequest" => workItemType.Contains("Change Request", StringComparison.OrdinalIgnoreCase)
+                           || workItemType.Contains("Task", StringComparison.OrdinalIgnoreCase),
+        "bug" => workItemType.Contains("Bug", StringComparison.OrdinalIgnoreCase),
+        _ => true
+    };
+
+    private static Color GetTypeColor(string workItemType) => workItemType.ToLower() switch
+    {
+        var t when t.Contains("requirement") || t.Contains("user story") || t.Contains("product backlog") => Color.Info,
+        var t when t.Contains("bug") => Color.Error,
+        var t when t.Contains("change request") || t.Contains("task") => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color GetStateColor(string state) => state.ToLower() switch
+    {
+        "new" or "proposed" => Color.Default,
+        "active" or "committed" or "in progress" => Color.Info,
+        "resolved" or "done" => Color.Success,
+        "closed" => Color.Success,
+        "removed" => Color.Error,
+        _ => Color.Default
+    };
+
+    private static string GetTypeClass(string workItemType) => workItemType.ToLower() switch
+    {
+        var t when t.Contains("requirement") || t.Contains("user story") || t.Contains("product backlog") => "wi-type-requirement",
+        var t when t.Contains("bug") => "wi-type-bug",
+        var t when t.Contains("change request") || t.Contains("task") => "wi-type-changerequest",
+        _ => ""
+    };
+
+    private static string Truncate(string? text, int max)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    private static string TruncateBranch(string? branch, int max = 60)
+    {
+        if (string.IsNullOrEmpty(branch)) return "";
+        return branch.Length <= max ? branch : branch[..max] + "...";
+    }
+
+    public void Dispose()
+    {
+        _scanCts?.Cancel();
+        _scanCts?.Dispose();
+    }
+}

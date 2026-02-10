@@ -1,0 +1,189 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ThemeService ThemeService
+@inject IJSRuntime JS
+@inject NavigationManager NavigationManager
+@inject IOptionsMonitor<ClaudeTraceHub.Web.Models.AzureDevOpsSettings> AzureDevOpsOptions
+@inject ISnackbar Snackbar
+@using Microsoft.Extensions.Options
+
+<MudThemeProvider @ref="_mudThemeProvider" Theme="ThemeService.CurrentTheme" IsDarkMode="ThemeService.IsDarkMode" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Primary">
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                       OnClick="@ToggleDrawer" />
+        <MudText Typo="Typo.h6" Class="ml-3">Claude TraceHub</MudText>
+        <MudSpacer />
+
+        @* Theme selector *@
+        <MudMenu Icon="@Icons.Material.Filled.Palette" Color="Color.Inherit"
+                 AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight"
+                 Dense="true">
+            @foreach (var theme in ThemeService.AvailableThemes)
+            {
+                <MudMenuItem OnClick="() => SelectTheme(theme.Key)">
+                    <div class="d-flex align-center gap-2">
+                        <span class="theme-dot" style="background-color: @theme.Value.PreviewColor;"></span>
+                        <span>@theme.Value.Name</span>
+                        @if (theme.Key == ThemeService.CurrentThemeName)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Check" Size="Size.Small" Color="Color.Primary" />
+                        }
+                    </div>
+                </MudMenuItem>
+            }
+        </MudMenu>
+
+        @* Dark mode toggle *@
+        <MudTooltip Text="@(ThemeService.IsDarkMode ? "Switch to light mode" : "Switch to dark mode")">
+            <MudIconButton Icon="@(_darkModeIcon)" Color="Color.Inherit"
+                           OnClick="ToggleDarkMode" />
+        </MudTooltip>
+    </MudAppBar>
+
+    <MudDrawer @bind-Open="_drawerOpen" ClipMode="DrawerClipMode.Always" Elevation="2">
+        <NavMenu RequiresSetup="_requiresSetup" />
+    </MudDrawer>
+
+    <MudMainContent Class="pt-16 px-4 pb-4">
+        @if (_requiresSetup && !_isOnSettingsPage)
+        {
+            <div class="setup-guard-container">
+                <MudPaper Elevation="3" Class="setup-guard-card pa-8">
+                    <div class="d-flex flex-column align-center text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.RocketLaunch" Size="Size.Large"
+                                 Color="Color.Primary" Style="font-size: 64px;" Class="mb-4" />
+                        <MudText Typo="Typo.h4" Class="mb-2">Welcome to Claude TraceHub</MudText>
+                        <MudText Typo="Typo.body1" Color="Color.Secondary" Class="mb-6" Style="max-width: 480px;">
+                            Let's get you set up first. Connect your Azure DevOps or TFS instance
+                            to start exploring work items alongside your Claude conversations.
+                        </MudText>
+
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                                   StartIcon="@Icons.Material.Filled.Settings"
+                                   Href="/settings">
+                            Go to Settings
+                        </MudButton>
+                    </div>
+                </MudPaper>
+            </div>
+        }
+        else
+        {
+            @Body
+        }
+    </MudMainContent>
+</MudLayout>
+
+<div id="blazor-error-ui">
+    An unhandled error has occurred.
+    <a href="" class="reload">Reload</a>
+    <a class="dismiss">x</a>
+</div>
+
+@code {
+    private bool _drawerOpen = true;
+    private MudThemeProvider _mudThemeProvider = null!;
+    private bool _requiresSetup;
+    private bool _isOnSettingsPage;
+    private bool _welcomeToastShown;
+
+    private string _darkModeIcon => ThemeService.IsDarkMode
+        ? Icons.Material.Filled.LightMode
+        : Icons.Material.Filled.DarkMode;
+
+    protected override void OnInitialized()
+    {
+        ThemeService.OnThemeChanged += OnThemeChanged;
+        NavigationManager.LocationChanged += OnLocationChanged;
+        AzureDevOpsOptions.OnChange(UpdateSetupState);
+        UpdateSetupState(AzureDevOpsOptions.CurrentValue);
+        UpdateLocationState();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var themeName = await JS.InvokeAsync<string?>("localStorage.getItem", "themeName");
+            var isDarkStr = await JS.InvokeAsync<string?>("localStorage.getItem", "isDarkMode");
+            var isDark = isDarkStr == "true";
+
+            ThemeService.SetFromStorage(themeName, isDark);
+            await ApplyThemeClass();
+
+            if (_requiresSetup && !_welcomeToastShown)
+            {
+                _welcomeToastShown = true;
+                Snackbar.Add("Welcome! Please complete the required settings to get started.", Severity.Info,
+                    config => config.VisibleStateDuration = 5000);
+            }
+
+            StateHasChanged();
+        }
+        else
+        {
+            await ApplyThemeClass();
+        }
+    }
+
+    private async Task ApplyThemeClass()
+    {
+        var themeClass = ThemeService.IsDarkMode ? "dark-theme" : "light-theme";
+        await JS.InvokeVoidAsync("eval",
+            $"document.documentElement.className = '{themeClass}'");
+    }
+
+    private async Task SelectTheme(string themeName)
+    {
+        ThemeService.SetTheme(themeName, ThemeService.IsDarkMode);
+        await PersistTheme();
+    }
+
+    private async Task ToggleDarkMode()
+    {
+        ThemeService.ToggleDarkMode();
+        await PersistTheme();
+    }
+
+    private async Task PersistTheme()
+    {
+        await JS.InvokeVoidAsync("localStorage.setItem", "themeName", ThemeService.CurrentThemeName);
+        await JS.InvokeVoidAsync("localStorage.setItem", "isDarkMode", ThemeService.IsDarkMode.ToString().ToLower());
+    }
+
+    private void OnThemeChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleDrawer() => _drawerOpen = !_drawerOpen;
+
+    private void UpdateSetupState(ClaudeTraceHub.Web.Models.AzureDevOpsSettings settings)
+    {
+        _requiresSetup = !settings.IsConfigured;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateLocationState()
+    {
+        var uri = new Uri(NavigationManager.Uri);
+        _isOnSettingsPage = uri.AbsolutePath.TrimEnd('/').Equals("/settings", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        UpdateLocationState();
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ThemeService.OnThemeChanged -= OnThemeChanged;
+        NavigationManager.LocationChanged -= OnLocationChanged;
+    }
+}

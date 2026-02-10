@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+    <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <script>
+        // Apply theme class immediately from localStorage to prevent flash and style reconnect UI
+        (function() {
+            var isDark = localStorage.getItem('isDarkMode') === 'true';
+            document.documentElement.className = isDark ? 'dark-theme' : 'light-theme';
+        })();
+    </script>
+    <div id="components-reconnect-modal">
+        <div>
+            <h5>Connection Lost</h5>
+            <p>Attempting to reconnect to the server...</p>
+            <button onclick="window.location.reload()">Reload Page</button>
+        </div>
+    </div>
+    <Routes @rendermode="InteractiveServer" />
+    <script src="_framework/blazor.web.js" autostart="false"></script>
+    <script>
+        // Reconnection UI: Blazor natively manages CSS classes on
+        // #components-reconnect-modal (show/failed/rejected). The CSS
+        // rules toggle display. We only add offline/online listeners
+        // for browser-level network loss detection.
+        (function () {
+            window.addEventListener('offline', function () {
+                var m = document.getElementById('components-reconnect-modal');
+                if (!m) return;
+                var p = m.querySelector('p');
+                if (p) p.textContent = 'Network connection lost. Waiting for network\u2026';
+                m.classList.add('components-reconnect-show');
+            });
+            window.addEventListener('online', function () {
+                var m = document.getElementById('components-reconnect-modal');
+                if (m) {
+                    var p = m.querySelector('p');
+                    if (p) p.textContent = 'Network restored. Reconnecting\u2026';
+                }
+                setTimeout(function () { window.location.reload(); }, 1500);
+            });
+
+            try {
+                Blazor.start();
+            } catch (e) {
+                console.warn('[TraceHub] Blazor start failed:', e);
+            }
+        })();
+    </script>
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script src="js/download.js"></script>
+</body>
+
+</html>

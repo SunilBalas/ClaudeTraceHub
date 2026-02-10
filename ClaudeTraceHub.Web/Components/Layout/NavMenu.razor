@@ -1,0 +1,48 @@
+@inject NavigationManager NavigationManager
+@using System.Reflection
+
+<div class="nav-brand">
+    <div class="nav-brand-title">
+        <MudIcon Icon="@Icons.Material.Filled.History" Size="Size.Medium" />
+        Claude TraceHub
+    </div>
+    <div class="nav-brand-subtitle">Conversation Tracker</div>
+</div>
+
+<MudNavMenu>
+    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard"
+                Disabled="RequiresSetup">
+        Dashboard
+    </MudNavLink>
+    <MudNavLink Href="/projects" Icon="@Icons.Material.Filled.Folder"
+                Disabled="RequiresSetup">
+        Projects
+    </MudNavLink>
+    <MudNavLink Href="/tfs-explorer" Icon="@Icons.Material.Filled.FindInPage"
+                Disabled="RequiresSetup">
+        TFS Explorer
+    </MudNavLink>
+    <MudDivider Class="my-2" />
+    <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
+        Settings
+    </MudNavLink>
+</MudNavMenu>
+
+<div class="nav-footer">
+    <MudText Typo="Typo.caption" Color="Color.Tertiary">v@(_version) | @_copyright</MudText>
+</div>
+
+@code {
+    [Parameter] public bool RequiresSetup { get; set; }
+
+    private static readonly Assembly _assembly = Assembly.GetExecutingAssembly();
+
+    private string _version = _assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? _assembly.GetName().Version?.ToString(3)
+        ?? "0.0.0";
+
+    private string _copyright = _assembly
+        .GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright
+        ?? $"\u00a9 {DateTime.Now.Year}";
+}

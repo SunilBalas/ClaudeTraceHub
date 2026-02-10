@@ -1,0 +1,288 @@
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small"
+                     Color="@GetActionColor(Timeline.OverallAction)" />
+            <MudText Typo="Typo.h6" Style="font-size: 14px; font-weight: 600;">
+                @System.IO.Path.GetFileName(Timeline.FilePath)
+            </MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                     Style="font-size: 10px;">@GetFileExtension()</MudChip>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @* File info bar *@
+        <div class="diff-file-info">
+            <span class="diff-file-path">@Timeline.FilePath</span>
+            <div class="d-flex align-center gap-2 mt-1">
+                <MudChip T="string" Size="Size.Small" Color="@GetActionColor(Timeline.OverallAction)"
+                         Variant="Variant.Filled">@Timeline.OverallAction</MudChip>
+                <span class="diff-meta-text">
+                    @Timeline.Changes.Count operation(s)
+                </span>
+                @{ var totalAdded = Timeline.Changes.Sum(c => c.AddedLineCount); }
+                @{ var totalRemoved = Timeline.Changes.Sum(c => c.RemovedLineCount); }
+                @if (totalAdded > 0)
+                {
+                    <span class="diff-stat-added">+@totalAdded</span>
+                }
+                @if (totalRemoved > 0)
+                {
+                    <span class="diff-stat-removed">-@totalRemoved</span>
+                }
+                @if (totalAdded + totalRemoved > 0)
+                {
+                    <span class="diff-stat-bar">
+                        @{
+                            int total = totalAdded + totalRemoved;
+                            int addBlocks = total > 0 ? (int)Math.Round(5.0 * totalAdded / total) : 0;
+                            if (totalRemoved > 0 && addBlocks >= 5) addBlocks = 4;
+                            if (totalAdded > 0 && addBlocks <= 0) addBlocks = 1;
+                        }
+                        @for (int i = 0; i < 5; i++)
+                        {
+                            <span class="diff-stat-dot @(i < addBlocks ? "added" : "removed")"></span>
+                        }
+                    </span>
+                }
+            </div>
+        </div>
+
+        @* Change steps *@
+        @foreach (var change in Timeline.Changes)
+        {
+            <div class="diff-file-block">
+                @* Step header *@
+                <div class="diff-file-header">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@GetStepIcon(change.Action)" Size="Size.Small"
+                                 Style="@GetStepIconStyle(change.Action)" />
+                        <span class="diff-file-header-title">
+                            Step @change.StepNumber — @change.ToolName
+                        </span>
+                        @if (change.ReplaceAll)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Info"
+                                     Variant="Variant.Outlined" Style="font-size: 10px;">replace_all</MudChip>
+                        }
+                        @if (change.Action == FileActionType.Modified)
+                        {
+                            @if (change.RemovedLineCount > 0)
+                            {
+                                <span class="diff-stat-removed" style="font-size: 11px;">-@change.RemovedLineCount</span>
+                            }
+                            @if (change.AddedLineCount > 0)
+                            {
+                                <span class="diff-stat-added" style="font-size: 11px;">+@change.AddedLineCount</span>
+                            }
+                            var stepAddBlocks = CalcStatBlocks(change.AddedLineCount, change.RemovedLineCount);
+                            <span class="diff-stat-bar">
+                                @for (int s = 0; s < 5; s++)
+                                {
+                                    <span class="diff-stat-dot @(s < stepAddBlocks ? "added" : "removed")"></span>
+                                }
+                            </span>
+                        }
+                        else if (change.Action == FileActionType.Created)
+                        {
+                            <span class="diff-stat-added" style="font-size: 11px;">+@change.AddedLineCount lines</span>
+                            <span class="diff-stat-bar">
+                                @for (int s = 0; s < 5; s++)
+                                {
+                                    <span class="diff-stat-dot added"></span>
+                                }
+                            </span>
+                        }
+                    </div>
+                    <span class="diff-meta-text">
+                        @change.Timestamp.ToString("HH:mm:ss")
+                    </span>
+                </div>
+
+                @* Diff body *@
+                @if (change.Action == FileActionType.Read)
+                {
+                    <div class="diff-read-notice">
+                        <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small"
+                                 Class="diff-read-icon" />
+                        File was read — no changes
+                    </div>
+                }
+                else if (change.Action == FileActionType.Modified)
+                {
+                    var diffLines = LineDiffHelper.ComputeDiff(change.OldContent, change.NewContent);
+                    var hunks = LineDiffHelper.GroupIntoHunks(diffLines);
+                    <div class="diff-table-wrapper">
+                        <table class="diff-table">
+                            <tbody>
+                                @for (int h = 0; h < hunks.Count; h++)
+                                {
+                                    var hunk = hunks[h];
+                                    @if (h > 0)
+                                    {
+                                        var prevHunk = hunks[h - 1];
+                                        var prevLastOld = prevHunk.Lines.LastOrDefault(l => l.OldLineNumber.HasValue)?.OldLineNumber ?? 0;
+                                        var curFirstOld = hunk.Lines.FirstOrDefault(l => l.OldLineNumber.HasValue)?.OldLineNumber ?? 0;
+                                        var hiddenCount = curFirstOld - prevLastOld - 1;
+                                        @if (hiddenCount > 0)
+                                        {
+                                            <tr class="diff-hunk-separator">
+                                                <td colspan="4">
+                                                    <div class="diff-hunk-separator-content">
+                                                        <MudIcon Icon="@Icons.Material.Filled.UnfoldMore" Size="Size.Small" Class="diff-meta-icon" />
+                                                        <span>@hiddenCount hidden lines</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                    <tr class="diff-hunk-header-row">
+                                        <td class="diff-line-num diff-hunk-num"></td>
+                                        <td class="diff-line-num diff-hunk-num"></td>
+                                        <td class="diff-line-marker diff-hunk-marker"></td>
+                                        <td class="diff-hunk-text">@hunk.Header</td>
+                                    </tr>
+                                    @foreach (var line in hunk.Lines)
+                                    {
+                                        <tr class="@GetDiffLineClass(line.Type)">
+                                            <td class="diff-line-num diff-line-num-old">@(line.OldLineNumber?.ToString() ?? "")</td>
+                                            <td class="diff-line-num diff-line-num-new">@(line.NewLineNumber?.ToString() ?? "")</td>
+                                            <td class="diff-line-marker">@GetLineMarker(line.Type)</td>
+                                            <td class="diff-line-content"><code>@line.Content</code></td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else if (change.Action == FileActionType.Created)
+                {
+                    var contentToShow = change.IsLargeContent && !IsExpanded(change.StepNumber)
+                        ? change.TruncatedNewContent
+                        : change.NewContent;
+                    var createdLines = LineDiffHelper.ForNewFile(contentToShow);
+                    <div class="diff-table-wrapper">
+                        <table class="diff-table">
+                            <tbody>
+                                <tr class="diff-hunk-header-row">
+                                    <td class="diff-line-num diff-hunk-num"></td>
+                                    <td class="diff-line-num diff-hunk-num"></td>
+                                    <td class="diff-line-marker diff-hunk-marker"></td>
+                                    <td class="diff-hunk-text">@@ -0,0 +1,@createdLines.Count @@</td>
+                                </tr>
+                                @foreach (var line in createdLines)
+                                {
+                                    <tr class="diff-line-added">
+                                        <td class="diff-line-num diff-line-num-old"></td>
+                                        <td class="diff-line-num diff-line-num-new">@line.NewLineNumber</td>
+                                        <td class="diff-line-marker">+</td>
+                                        <td class="diff-line-content"><code>@line.Content</code></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    @if (change.IsLargeContent)
+                    {
+                        <div class="diff-expand-bar">
+                            @if (!IsExpanded(change.StepNumber))
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.UnfoldMore"
+                                           OnClick="() => ToggleExpand(change.StepNumber)">
+                                    Show all @EstimateLines(change.NewContent) lines
+                                </MudButton>
+                            }
+                            else
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Secondary"
+                                           StartIcon="@Icons.Material.Filled.UnfoldLess"
+                                           OnClick="() => ToggleExpand(change.StepNumber)">
+                                    Collapse
+                                </MudButton>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public FileChangeTimeline Timeline { get; set; } = new();
+
+    private readonly HashSet<int> _expandedSteps = new();
+
+    private bool IsExpanded(int stepNumber) => _expandedSteps.Contains(stepNumber);
+
+    private void ToggleExpand(int stepNumber)
+    {
+        if (!_expandedSteps.Add(stepNumber))
+            _expandedSteps.Remove(stepNumber);
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private static int EstimateLines(string? content) =>
+        content?.Split('\n').Length ?? 0;
+
+    private string GetFileExtension()
+    {
+        var ext = System.IO.Path.GetExtension(Timeline.FilePath);
+        return string.IsNullOrEmpty(ext) ? "file" : ext;
+    }
+
+    private static Color GetActionColor(FileActionType action) => action switch
+    {
+        FileActionType.Created => Color.Success,
+        FileActionType.Modified => Color.Warning,
+        FileActionType.Read => Color.Info,
+        _ => Color.Default
+    };
+
+    private static string GetStepIcon(FileActionType action) => action switch
+    {
+        FileActionType.Created => Icons.Material.Filled.NoteAdd,
+        FileActionType.Modified => Icons.Material.Filled.EditNote,
+        FileActionType.Read => Icons.Material.Filled.Visibility,
+        _ => Icons.Material.Filled.InsertDriveFile
+    };
+
+    private static string GetStepIconStyle(FileActionType action) => action switch
+    {
+        FileActionType.Created => "color: #1a7f37;",
+        FileActionType.Modified => "color: #9a6700;",
+        FileActionType.Read => "color: #0969da;",
+        _ => ""
+    };
+
+    private static string GetDiffLineClass(DiffLineType type) => type switch
+    {
+        DiffLineType.Added => "diff-line-added",
+        DiffLineType.Removed => "diff-line-removed",
+        _ => "diff-line-unchanged"
+    };
+
+    private static string GetLineMarker(DiffLineType type) => type switch
+    {
+        DiffLineType.Added => "+",
+        DiffLineType.Removed => "-",
+        _ => " "
+    };
+
+    private static int CalcStatBlocks(int added, int removed)
+    {
+        int total = added + removed;
+        if (total == 0) return 0;
+        int blocks = (int)Math.Round(5.0 * added / total);
+        if (removed > 0 && blocks >= 5) blocks = 4;
+        if (added > 0 && blocks <= 0) blocks = 1;
+        return blocks;
+    }
+}

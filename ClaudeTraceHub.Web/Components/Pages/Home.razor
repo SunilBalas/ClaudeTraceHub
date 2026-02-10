@@ -1,0 +1,302 @@
+@page "/"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject DashboardService DashboardService
+@inject NavigationManager NavigationManager
+@inject DataRefreshService RefreshService
+
+<PageTitle>Dashboard - Claude TraceHub</PageTitle>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading dashboard...</MudText>
+    </div>
+}
+else
+{
+    <div class="page-content">
+    <MudText Typo="Typo.h4" Class="mb-4">Dashboard</MudText>
+
+    @* Stats Cards *@
+    <MudGrid>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-primary">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Chat" Color="Color.Primary" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@_stats.TotalConversations</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Total Conversations</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-info">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Message" Color="Color.Info" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@FormatNumber(_stats.TotalMessages)</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Total Messages</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-warning">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Warning" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@_stats.ActiveProjects</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Active Projects (30d)</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-success">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Speed" Color="Color.Success" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@(_stats.TotalConversations > 0 ? (_stats.TotalMessages / _stats.TotalConversations).ToString() : "0")</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Msgs/Conversation</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* Charts Row 1: Activity + Model Usage *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="8">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Conversations Per Day</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Last 30 days</MudChip>
+                </div>
+                <MudChart ChartType="ChartType.Line" ChartSeries="@_convPerDaySeries"
+                          XAxisLabels="@_convPerDayLabels" Width="100%" Height="300px"
+                          ChartOptions="@_lineChartOptions" />
+                <div class="chart-summary">
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@_convPerDayTotal</span>
+                        <span class="chart-summary-label">Total</span>
+                    </div>
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@_convPerDayAvg</span>
+                        <span class="chart-summary-label">Daily Avg</span>
+                    </div>
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@_convPerDayMax</span>
+                        <span class="chart-summary-label">Peak Day</span>
+                    </div>
+                </div>
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Model Usage</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Recent sessions</MudChip>
+                </div>
+                @if (_modelLabels.Length > 0)
+                {
+                    <MudChart ChartType="ChartType.Donut" InputData="@_modelData"
+                              InputLabels="@_modelLabels" Width="100%" Height="200px" />
+                    <div class="chart-legend">
+                        @for (int i = 0; i < _modelLabels.Length; i++)
+                        {
+                            var idx = i;
+                            var pct = _modelTotal > 0 ? (_modelData[idx] / _modelTotal * 100) : 0;
+                            <div class="chart-legend-item">
+                                <span class="chart-legend-dot" style="background-color: @_chartColors[idx % _chartColors.Length]"></span>
+                                <span class="chart-legend-name">@_modelLabels[idx]</span>
+                                <span class="chart-legend-value">@((int)_modelData[idx]) <span class="chart-legend-pct">(@pct.ToString("0")%)</span></span>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex align-center justify-center" style="height: 200px;">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No model data available</MudText>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Charts Row 2: Projects + Recent Conversations *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Top Projects by Messages</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Top @_msgsPerProjectLabels.Length</MudChip>
+                </div>
+                @if (_msgsPerProjectLabels.Length > 0)
+                {
+                    <div class="project-bars">
+                        @for (int i = 0; i < _msgsPerProjectLabels.Length; i++)
+                        {
+                            var idx = i;
+                            var maxVal = _msgsPerProjectSeries.Count > 0 && _msgsPerProjectSeries[0].Data.Length > 0
+                                ? _msgsPerProjectSeries[0].Data.Max() : 1;
+                            var val = _msgsPerProjectSeries[0].Data[idx];
+                            var widthPct = maxVal > 0 ? (val / maxVal * 100) : 0;
+                            <div class="project-bar-row">
+                                <div class="project-bar-label" title="@_msgsPerProjectFullNames[idx]">@_msgsPerProjectLabels[idx]</div>
+                                <div class="project-bar-track">
+                                    <div class="project-bar-fill" style="width: @widthPct.ToString("0")%"></div>
+                                </div>
+                                <div class="project-bar-value">@FormatNumber((long)val)</div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No project data yet</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Recent Conversations</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Latest @_recentConversations.Count</MudChip>
+                </div>
+                <MudTable Items="@_recentConversations" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                          OnRowClick="@OnRowClick" T="SessionSummary" RowClass="cursor-pointer">
+                    <HeaderContent>
+                        <MudTh>Project</MudTh>
+                        <MudTh>Date</MudTh>
+                        <MudTh>Msgs</MudTh>
+                        <MudTh>First Prompt</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Project">@Truncate(context.ProjectName, 18)</MudTd>
+                        <MudTd DataLabel="Date">@(context.Created?.ToString("MMM dd HH:mm") ?? "")</MudTd>
+                        <MudTd DataLabel="Msgs">@context.MessageCount</MudTd>
+                        <MudTd DataLabel="Prompt">@Truncate(context.FirstPrompt, 45)</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private DashboardStats _stats = new();
+    private List<SessionSummary> _recentConversations = new();
+
+    // Chart data
+    private List<ChartSeries> _convPerDaySeries = new();
+    private string[] _convPerDayLabels = Array.Empty<string>();
+    private List<ChartSeries> _msgsPerProjectSeries = new();
+    private string[] _msgsPerProjectLabels = Array.Empty<string>();
+    private string[] _msgsPerProjectFullNames = Array.Empty<string>();
+    private double[] _modelData = Array.Empty<double>();
+    private string[] _modelLabels = Array.Empty<string>();
+    private double _modelTotal;
+
+    // Line chart summary
+    private int _convPerDayTotal;
+    private string _convPerDayAvg = "0";
+    private int _convPerDayMax;
+
+    // Chart options
+    private readonly ChartOptions _lineChartOptions = new()
+    {
+        YAxisTicks = 5,
+        LineStrokeWidth = 2.5,
+        MaxNumYAxisTicks = 8
+    };
+
+    // MudBlazor default chart palette
+    private readonly string[] _chartColors = { "#594AE2", "#FF4081", "#00BCD4", "#FF9800", "#4CAF50", "#9C27B0", "#795548" };
+
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        await Task.Run(() =>
+        {
+            _stats = DashboardService.GetStats();
+            _recentConversations = DashboardService.GetRecentConversations(15);
+
+            // Conversations per day (show every 5th label)
+            var convPerDay = DashboardService.GetConversationsPerDay(30);
+            _convPerDayLabels = convPerDay.Select((c, i) =>
+                i % 5 == 0 || i == convPerDay.Count - 1 ? c.Date.ToString("MMM dd") : ""
+            ).ToArray();
+            _convPerDaySeries = new List<ChartSeries>
+            {
+                new() { Name = "Conversations", Data = convPerDay.Select(c => (double)c.Count).ToArray() }
+            };
+            _convPerDayTotal = convPerDay.Sum(c => c.Count);
+            _convPerDayAvg = convPerDay.Count > 0 ? ((double)_convPerDayTotal / convPerDay.Count).ToString("0.#") : "0";
+            _convPerDayMax = convPerDay.Count > 0 ? convPerDay.Max(c => c.Count) : 0;
+
+            // Messages per project (truncate labels, keep full names for tooltip)
+            var msgsPerProject = DashboardService.GetMessagesPerProject();
+            _msgsPerProjectFullNames = msgsPerProject.Select(m => m.ProjectName).ToArray();
+            _msgsPerProjectLabels = msgsPerProject.Select(m =>
+                m.ProjectName.Length > 18 ? m.ProjectName[..15] + "..." : m.ProjectName
+            ).ToArray();
+            _msgsPerProjectSeries = new List<ChartSeries>
+            {
+                new() { Name = "Messages", Data = msgsPerProject.Select(m => (double)m.MessageCount).ToArray() }
+            };
+
+            // Model distribution
+            var models = DashboardService.GetModelDistribution();
+            _modelLabels = models.Select(m => m.ModelName).ToArray();
+            _modelData = models.Select(m => (double)m.Count).ToArray();
+            _modelTotal = _modelData.Sum();
+        });
+    }
+
+    private void OnRowClick(TableRowClickEventArgs<SessionSummary> args)
+    {
+        var s = args.Item;
+        if (s != null)
+            NavigationManager.NavigateTo($"/conversation/{s.ProjectDirName}/{s.SessionId}");
+    }
+
+    private static string FormatNumber(long num)
+    {
+        return num >= 1_000_000 ? $"{num / 1_000_000.0:F1}M"
+             : num >= 1_000 ? $"{num / 1_000.0:F1}K"
+             : num.ToString();
+    }
+
+    private static string Truncate(string text, int max)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}

@@ -1,0 +1,17 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- Semantic Versioning: Major.Minor.Patch -->
+    <!-- Major: breaking changes -->
+    <!-- Minor: new features (backward-compatible) -->
+    <!-- Patch: bug fixes, hotfixes -->
+    <Version>1.0.0</Version>
+
+    <!-- Product metadata -->
+    <Product>ClaudeTraceHub</Product>
+    <Authors>Sunil Balas</Authors>
+    <Description>Claude Code conversation trace viewer and TFS work item explorer</Description>
+    <Copyright>Copyright © $([System.DateTime]::Now.Year) Sunil Balas</Copyright>
+  </PropertyGroup>
+
+</Project>
