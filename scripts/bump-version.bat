@@ -93,7 +93,7 @@ if defined LAST_TAG (
     echo Analyzing commits since %LAST_TAG%...
     set "GIT_RANGE=%LAST_TAG%..HEAD"
 ) else (
-    echo Analyzing all commits (no version tag found)...
+    echo Analyzing all commits ^(no version tag found^)...
     set "GIT_RANGE=HEAD"
 )
 
@@ -106,7 +106,7 @@ for /f "usebackq delims=" %%r in (`powershell -NoProfile -Command ^
     "foreach ($msg in $logs) { " ^
     "  $count++; " ^
     "  $lower = $msg.ToLower().Trim(); " ^
-    "  if ($lower -match '^breaking[\s:]' -or $lower -match '^major[\s:]' -or $msg -match 'BREAKING CHANGE' -or $lower -match '!:') { $major++ } " ^
+    "  if ($lower -match '^breaking[\s:]' -or $lower -match '^major[\s:]' -or $msg -match 'BREAKING CHANGE' -or $lower -match '^^!:') { $major++ } " ^
     "  elseif ($lower -match '^feat[\s:\(]' -or $lower -match '^feature[\s:\(]' -or $lower -match '^add[\s:\(]' -or $lower -match '^update[\s:\(]' -or $lower -match '^enhance[\s:\(]') { $minor++ } " ^
     "  elseif ($lower -match '^fix[\s:\(]' -or $lower -match '^bugfix[\s:\(]' -or $lower -match '^hotfix[\s:\(]' -or $lower -match '^patch[\s:\(]' -or $lower -match '^perf[\s:\(]') { $patch++ } " ^
     "  else { $patch++ } " ^
