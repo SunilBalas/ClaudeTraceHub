@@ -1567,3 +1567,72 @@ html, body {
     border-radius: 12px;
     animation: fadeIn 0.5s ease-out;
 }
+
+/* ============================================================
+   16. DAILY SUMMARY
+   ============================================================ */
+
+/* Day summary paragraph */
+.daily-summary-paragraph {
+    border-left: 4px solid var(--mud-palette-primary);
+    border-radius: 8px;
+    background: var(--mud-palette-surface);
+}
+
+.dark-theme .daily-summary-paragraph {
+    background: #1e1e2d;
+}
+
+/* AI badge chip */
+.ai-badge {
+    font-size: 10px !important;
+    height: 20px !important;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+/* Conversation expansion panels */
+.daily-conv-panel .mud-expansion-panel {
+    border-left: 3px solid transparent;
+    transition: border-left-color 0.2s ease;
+}
+
+.daily-conv-panel .mud-expansion-panel:hover {
+    border-left-color: var(--mud-palette-primary);
+}
+
+.daily-conv-panel .mud-expand-panel-expanded {
+    border-left-color: var(--mud-palette-primary);
+}
+
+/* Conversation detail grid */
+.daily-conv-detail .mud-grid-item {
+    border-right: 1px solid #f0f0f0;
+}
+
+.daily-conv-detail .mud-grid-item:last-child {
+    border-right: none;
+}
+
+.dark-theme .daily-conv-detail .mud-grid-item {
+    border-right-color: #2d2d3f;
+}
+
+/* Tool usage chips */
+.daily-tool-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 8px;
+}
+
+/* Token chart */
+.daily-token-chart {
+    border-radius: 12px;
+}
+
+/* Empty state */
+.daily-empty-state {
+    border: 2px dashed var(--mud-palette-lines-default);
+    border-radius: 12px;
+}

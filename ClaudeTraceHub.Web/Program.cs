@@ -18,6 +18,7 @@ builder.Services.AddSingleton<ClaudeDataDiscoveryService>();
 builder.Services.AddSingleton<JsonlParserService>();
 builder.Services.AddSingleton<ConversationCacheService>();
 builder.Services.AddScoped<DashboardService>();
+builder.Services.AddScoped<DailySummaryService>();
 builder.Services.AddScoped<ExcelExportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<TfsWorkItemFilterService>();
@@ -34,6 +35,11 @@ builder.Services.AddSingleton<SettingsService>();
 builder.Services.Configure<AzureDevOpsSettings>(
     builder.Configuration.GetSection("AzureDevOps"));
 builder.Services.AddHttpClient<AzureDevOpsService>();
+
+// Claude AI integration (for AI-powered summaries)
+builder.Services.Configure<ClaudeAiSettings>(
+    builder.Configuration.GetSection("ClaudeAi"));
+builder.Services.AddHttpClient<AiSummaryService>();
 
 // Ensure WebRootPath resolves correctly regardless of working directory
 var contentRoot = builder.Environment.ContentRootPath;

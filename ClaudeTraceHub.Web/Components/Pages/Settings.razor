@@ -1,7 +1,9 @@
 @page "/settings"
 @rendermode InteractiveServer
 @inject IOptionsSnapshot<AzureDevOpsSettings> CurrentSettings
+@inject IOptionsSnapshot<ClaudeAiSettings> CurrentClaudeSettings
 @inject AzureDevOpsService AzureDevOpsService
+@inject AiSummaryService AiSummaryService
 @inject SettingsService SettingsService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
@@ -26,167 +28,249 @@
 
     <MudText Typo="Typo.h4" Class="mb-2">Settings</MudText>
     <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
-        Configure Azure DevOps / TFS integration settings
+        Configure integrations and AI features
     </MudText>
 
-    <MudPaper Elevation="2" Class="pa-6" Style="max-width: 720px; overflow: visible;">
-        <MudText Typo="Typo.h6" Class="mb-4">
-            <MudIcon Icon="@Icons.Material.Filled.Cloud" Class="mr-2" Style="vertical-align: middle;" />
-            Azure DevOps Connection
-        </MudText>
-
-        @* Required fields checklist *@
-        @if (_isFirstRun)
-        {
-            <MudPaper Elevation="0" Class="pa-3 mb-4" Style="border-radius: 8px; border: 1px dashed var(--mud-palette-primary);">
-                <MudText Typo="Typo.caption" Color="Color.Primary" Class="mb-2"><b>REQUIRED TO GET STARTED</b></MudText>
-                <div class="d-flex flex-column gap-1">
-                    <div class="d-flex align-center gap-2">
-                        <MudIcon Icon="@(_hasUrl ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
-                                 Color="@(_hasUrl ? Color.Success : Color.Default)" Size="Size.Small" />
-                        <MudText Typo="Typo.body2" Color="@(_hasUrl ? Color.Success : Color.Secondary)">Organization URL</MudText>
-                    </div>
-                    <div class="d-flex align-center gap-2">
-                        <MudIcon Icon="@(_hasPat ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
-                                 Color="@(_hasPat ? Color.Success : Color.Default)" Size="Size.Small" />
-                        <MudText Typo="Typo.body2" Color="@(_hasPat ? Color.Success : Color.Secondary)">Personal Access Token</MudText>
-                    </div>
-                    <div class="d-flex align-center gap-2">
-                        <MudIcon Icon="@(_orgVerified ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
-                                 Color="@(_orgVerified ? Color.Success : Color.Default)" Size="Size.Small" />
-                        <MudText Typo="Typo.body2" Color="@(_orgVerified ? Color.Success : Color.Secondary)">URL verified</MudText>
-                    </div>
-                    <div class="d-flex align-center gap-2">
-                        <MudIcon Icon="@(_hasProjects ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
-                                 Color="@(_hasProjects ? Color.Success : Color.Default)" Size="Size.Small" />
-                        <MudText Typo="Typo.body2" Color="@(_hasProjects ? Color.Success : Color.Secondary)">At least one project selected</MudText>
-                    </div>
-                </div>
-            </MudPaper>
-        }
-
-        @* Organization URL *@
-        <MudTextField Value="_organizationUrl"
-                      ValueChanged="OnOrgUrlChanged"
-                      T="string"
-                      Label="Organization URL"
-                      Placeholder="https://dev.azure.com/yourorg/ or https://tfs.example.com/tfs/Collection/"
-                      Variant="Variant.Outlined"
-                      Immediate="true"
-                      Adornment="Adornment.Start"
-                      AdornmentIcon="@Icons.Material.Filled.Link"
-                      Class="mb-4"
-                      Error="@(!string.IsNullOrEmpty(_orgError))"
-                      ErrorText="@_orgError"
-                      HelperText="The full URL to your Azure DevOps organization or TFS collection" />
-
-        @* PAT *@
-        <MudTextField Value="_personalAccessToken"
-                      ValueChanged="OnPatChanged"
-                      T="string"
-                      Label="Personal Access Token (PAT)"
-                      Variant="Variant.Outlined"
-                      Immediate="true"
-                      InputType="@_patInputType"
-                      Adornment="Adornment.End"
-                      AdornmentIcon="@_patVisibilityIcon"
-                      OnAdornmentClick="TogglePatVisibility"
-                      Class="mb-2"
-                      Error="@(!string.IsNullOrEmpty(_patError))"
-                      ErrorText="@_patError"
-                      HelperText="A PAT with read access to Code and Work Items" />
-
-        @* Test URL button *@
-        <div class="d-flex align-center gap-3 mb-4">
-            <MudButton Variant="Variant.Outlined" Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.NetworkCheck"
-                       OnClick="VerifyUrl" Disabled="@(_verifying || !_hasUrl || !_hasPat)">
-                @if (_verifying)
+    <MudPaper Elevation="2" Style="max-width: 720px; overflow: visible;">
+        <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+            <MudTabPanel Text="Azure DevOps" Icon="@Icons.Material.Filled.Cloud">
+                @* Required fields checklist *@
+                @if (_isFirstRun)
                 {
-                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
-                    <span>Verifying...</span>
+                    <MudPaper Elevation="0" Class="pa-3 mb-4" Style="border-radius: 8px; border: 1px dashed var(--mud-palette-primary);">
+                        <MudText Typo="Typo.caption" Color="Color.Primary" Class="mb-2"><b>REQUIRED TO GET STARTED</b></MudText>
+                        <div class="d-flex flex-column gap-1">
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@(_hasUrl ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                         Color="@(_hasUrl ? Color.Success : Color.Default)" Size="Size.Small" />
+                                <MudText Typo="Typo.body2" Color="@(_hasUrl ? Color.Success : Color.Secondary)">Organization URL</MudText>
+                            </div>
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@(_hasPat ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                         Color="@(_hasPat ? Color.Success : Color.Default)" Size="Size.Small" />
+                                <MudText Typo="Typo.body2" Color="@(_hasPat ? Color.Success : Color.Secondary)">Personal Access Token</MudText>
+                            </div>
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@(_orgVerified ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                         Color="@(_orgVerified ? Color.Success : Color.Default)" Size="Size.Small" />
+                                <MudText Typo="Typo.body2" Color="@(_orgVerified ? Color.Success : Color.Secondary)">URL verified</MudText>
+                            </div>
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@(_hasProjects ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.RadioButtonUnchecked)"
+                                         Color="@(_hasProjects ? Color.Success : Color.Default)" Size="Size.Small" />
+                                <MudText Typo="Typo.body2" Color="@(_hasProjects ? Color.Success : Color.Secondary)">At least one project selected</MudText>
+                            </div>
+                        </div>
+                    </MudPaper>
                 }
-                else
-                {
-                    <span>Test URL</span>
-                }
-            </MudButton>
-            @if (_showVerifySuccess)
-            {
-                <div class="d-flex align-center gap-1">
-                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
-                    <MudText Typo="Typo.body2" Color="Color.Success">
-                        Connected &mdash; @_availableProjects.Count project(s) found
-                    </MudText>
+
+                @* Organization URL *@
+                <MudTextField Value="_organizationUrl"
+                              ValueChanged="OnOrgUrlChanged"
+                              T="string"
+                              Label="Organization URL"
+                              Placeholder="https://dev.azure.com/yourorg/ or https://tfs.example.com/tfs/Collection/"
+                              Variant="Variant.Outlined"
+                              Immediate="true"
+                              Adornment="Adornment.Start"
+                              AdornmentIcon="@Icons.Material.Filled.Link"
+                              Class="mb-4"
+                              Error="@(!string.IsNullOrEmpty(_orgError))"
+                              ErrorText="@_orgError"
+                              HelperText="The full URL to your Azure DevOps organization or TFS collection" />
+
+                @* PAT *@
+                <MudTextField Value="_personalAccessToken"
+                              ValueChanged="OnPatChanged"
+                              T="string"
+                              Label="Personal Access Token (PAT)"
+                              Variant="Variant.Outlined"
+                              Immediate="true"
+                              InputType="@_patInputType"
+                              Adornment="Adornment.End"
+                              AdornmentIcon="@_patVisibilityIcon"
+                              OnAdornmentClick="TogglePatVisibility"
+                              Class="mb-2"
+                              Error="@(!string.IsNullOrEmpty(_patError))"
+                              ErrorText="@_patError"
+                              HelperText="A PAT with read access to Code and Work Items" />
+
+                @* Test URL button *@
+                <div class="d-flex align-center gap-3 mb-4">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.NetworkCheck"
+                               OnClick="VerifyUrl" Disabled="@(_verifying || !_hasUrl || !_hasPat)">
+                        @if (_verifying)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Verifying...</span>
+                        }
+                        else
+                        {
+                            <span>Test URL</span>
+                        }
+                    </MudButton>
+                    @if (_showVerifySuccess)
+                    {
+                        <div class="d-flex align-center gap-1">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            <MudText Typo="Typo.body2" Color="Color.Success">
+                                Connected &mdash; @_availableProjects.Count project(s) found
+                            </MudText>
+                        </div>
+                    }
                 </div>
-            }
-        </div>
 
-        <MudDivider Class="mb-4" />
+                <MudDivider Class="mb-4" />
 
-        @* Projects section *@
-        <MudText Typo="Typo.subtitle2" Class="mb-2">
-            Projects
-            @if (_orgVerified && !_hasProjects)
-            {
-                <MudText Typo="Typo.caption" Color="Color.Error" Class="ml-2" Style="display: inline;">
-                    (select at least one)
+                @* Projects section *@
+                <MudText Typo="Typo.subtitle2" Class="mb-2">
+                    Projects
+                    @if (_orgVerified && !_hasProjects)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error" Class="ml-2" Style="display: inline;">
+                            (select at least one)
+                        </MudText>
+                    }
                 </MudText>
-            }
-        </MudText>
 
-        @if (!_orgVerified)
-        {
-            <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4" NoIcon="false"
-                      Icon="@Icons.Material.Filled.Info">
-                Verify your Organization URL first to load available projects.
-            </MudAlert>
-        }
-        else
-        {
-            <MudSelect T="string" MultiSelection="true"
-                       SelectedValues="_selectedProjects"
-                       SelectedValuesChanged="OnProjectSelectionChanged"
-                       Label="Select projects"
-                       Variant="Variant.Outlined"
-                       Class="mb-4"
-                       Adornment="Adornment.Start"
-                       AdornmentIcon="@Icons.Material.Filled.Folder"
-                       AnchorOrigin="Origin.BottomLeft"
-                       TransformOrigin="Origin.TopLeft">
-                @foreach (var project in _availableProjects)
+                @if (!_orgVerified)
                 {
-                    <MudSelectItem T="string" Value="@project">@project</MudSelectItem>
-                }
-            </MudSelect>
-        }
-
-        @* Save button *@
-        <div class="mt-4">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Save"
-                       OnClick="SaveSettings"
-                       Disabled="@(_saving || !_orgVerified || !_hasProjects)">
-                @if (_saving)
-                {
-                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
-                    <span>Saving...</span>
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Text" Dense="true" Class="mb-4" NoIcon="false"
+                              Icon="@Icons.Material.Filled.Info">
+                        Verify your Organization URL first to load available projects.
+                    </MudAlert>
                 }
                 else
                 {
-                    <span>Save Settings</span>
+                    <MudSelect T="string" MultiSelection="true"
+                               SelectedValues="_selectedProjects"
+                               SelectedValuesChanged="OnProjectSelectionChanged"
+                               Label="Select projects"
+                               Variant="Variant.Outlined"
+                               Class="mb-4"
+                               Adornment="Adornment.Start"
+                               AdornmentIcon="@Icons.Material.Filled.Folder"
+                               AnchorOrigin="Origin.BottomLeft"
+                               TransformOrigin="Origin.TopLeft">
+                        @foreach (var project in _availableProjects)
+                        {
+                            <MudSelectItem T="string" Value="@project">@project</MudSelectItem>
+                        }
+                    </MudSelect>
                 }
-            </MudButton>
-        </div>
 
-        @* Save success *@
-        @if (_saveSuccess)
-        {
-            <MudAlert Severity="Severity.Success" Class="mt-4" Variant="Variant.Outlined"
-                      Icon="@Icons.Material.Filled.CheckCircle">
-                Settings saved successfully!
-            </MudAlert>
-        }
+                @* Save button *@
+                <div class="mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveSettings"
+                               Disabled="@(_saving || !_orgVerified || !_hasProjects)">
+                        @if (_saving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save Settings</span>
+                        }
+                    </MudButton>
+                </div>
+
+                @if (_saveSuccess)
+                {
+                    <MudAlert Severity="Severity.Success" Class="mt-4" Variant="Variant.Outlined"
+                              Icon="@Icons.Material.Filled.CheckCircle">
+                        Settings saved successfully!
+                    </MudAlert>
+                }
+            </MudTabPanel>
+
+            <MudTabPanel Text="Claude AI" Icon="@Icons.Material.Filled.AutoAwesome">
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+                    Provide your Anthropic API key to enable AI-powered daily summaries on the Daily Summary page.
+                    This is optional &mdash; a local summary is always shown as fallback.
+                </MudText>
+
+                @* API Key *@
+                <MudTextField Value="_claudeApiKey"
+                              ValueChanged="OnClaudeApiKeyChanged"
+                              T="string"
+                              Label="Anthropic API Key"
+                              Placeholder="sk-ant-api03-..."
+                              Variant="Variant.Outlined"
+                              Immediate="true"
+                              InputType="@_claudeKeyInputType"
+                              Adornment="Adornment.End"
+                              AdornmentIcon="@_claudeKeyVisibilityIcon"
+                              OnAdornmentClick="ToggleClaudeKeyVisibility"
+                              Class="mb-4"
+                              Error="@(!string.IsNullOrEmpty(_claudeKeyError))"
+                              ErrorText="@_claudeKeyError"
+                              HelperText="Your Anthropic API key from console.anthropic.com" />
+
+                @* Model Selection *@
+                <MudSelect T="string" Value="_claudeModel" ValueChanged="OnClaudeModelChanged"
+                           Label="Model" Variant="Variant.Outlined" Class="mb-4"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.SmartToy"
+                           HelperText="Model used for generating AI summaries">
+                    <MudSelectItem T="string" Value="@("claude-haiku-4-5-20251001")">Claude Haiku 4.5 (Fast, low cost)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("claude-sonnet-4-5-20250929")">Claude Sonnet 4.5 (Balanced)</MudSelectItem>
+                </MudSelect>
+
+                @* Test API Key button *@
+                <div class="d-flex align-center gap-3 mb-4">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.NetworkCheck"
+                               OnClick="TestClaudeApiKey"
+                               Disabled="@(_claudeTesting || !_hasClaudeKey)">
+                        @if (_claudeTesting)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Testing...</span>
+                        }
+                        else
+                        {
+                            <span>Test API Key</span>
+                        }
+                    </MudButton>
+                    @if (_claudeTestSuccess)
+                    {
+                        <div class="d-flex align-center gap-1">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            <MudText Typo="Typo.body2" Color="Color.Success">API key is valid</MudText>
+                        </div>
+                    }
+                </div>
+
+                @* Save button *@
+                <div class="mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveClaudeSettings"
+                               Disabled="@(_claudeSaving || !_hasClaudeKey)">
+                        @if (_claudeSaving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save AI Settings</span>
+                        }
+                    </MudButton>
+                </div>
+
+                @if (_claudeSaveSuccess)
+                {
+                    <MudAlert Severity="Severity.Success" Class="mt-4" Variant="Variant.Outlined"
+                              Icon="@Icons.Material.Filled.CheckCircle">
+                        Claude AI settings saved!
+                    </MudAlert>
+                }
+            </MudTabPanel>
+        </MudTabs>
     </MudPaper>
 </div>
 
@@ -215,6 +299,22 @@
         ? Icons.Material.Filled.VisibilityOff
         : Icons.Material.Filled.Visibility;
 
+    // Claude AI state
+    private string _claudeApiKey = "";
+    private string _claudeModel = "claude-haiku-4-5-20251001";
+    private bool _claudeKeyVisible;
+    private bool _claudeTesting;
+    private bool _claudeTestSuccess;
+    private bool _claudeSaving;
+    private bool _claudeSaveSuccess;
+    private string? _claudeKeyError;
+
+    private bool _hasClaudeKey => !string.IsNullOrWhiteSpace(_claudeApiKey);
+    private InputType _claudeKeyInputType => _claudeKeyVisible ? InputType.Text : InputType.Password;
+    private string _claudeKeyVisibilityIcon => _claudeKeyVisible
+        ? Icons.Material.Filled.VisibilityOff
+        : Icons.Material.Filled.Visibility;
+
     protected override void OnInitialized()
     {
         var settings = CurrentSettings.Value;
@@ -222,6 +322,11 @@
         _organizationUrl = settings.OrganizationUrl;
         _personalAccessToken = settings.PersonalAccessToken;
         _selectedProjects = new HashSet<string>(settings.Projects);
+
+        // Load Claude AI settings
+        var claudeSettings = CurrentClaudeSettings.Value;
+        _claudeApiKey = claudeSettings.ApiKey;
+        _claudeModel = claudeSettings.Model;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -394,4 +499,82 @@
     }
 
     private void TogglePatVisibility() => _patVisible = !_patVisible;
+
+    // Claude AI methods
+    private void OnClaudeApiKeyChanged(string value)
+    {
+        _claudeApiKey = value;
+        _claudeKeyError = null;
+        _claudeTestSuccess = false;
+        _claudeSaveSuccess = false;
+    }
+
+    private void OnClaudeModelChanged(string value)
+    {
+        _claudeModel = value;
+        _claudeTestSuccess = false;
+        _claudeSaveSuccess = false;
+    }
+
+    private async Task TestClaudeApiKey()
+    {
+        _claudeKeyError = null;
+        _claudeTesting = true;
+        _claudeTestSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var result = await AiSummaryService.TestApiKeyAsync(_claudeApiKey.Trim(), _claudeModel);
+            if (result.Success)
+            {
+                _claudeTestSuccess = true;
+                _ = DismissAfterDelay(() => _claudeTestSuccess = false);
+            }
+            else
+            {
+                _claudeKeyError = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            _claudeKeyError = "Unable to reach the Anthropic API. Check your network.";
+        }
+        finally
+        {
+            _claudeTesting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveClaudeSettings()
+    {
+        _claudeSaving = true;
+        _claudeSaveSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var settings = new ClaudeAiSettings
+            {
+                ApiKey = _claudeApiKey.Trim(),
+                Model = _claudeModel
+            };
+
+            await SettingsService.SaveClaudeAiSettingsAsync(settings);
+            _claudeSaveSuccess = true;
+            _ = DismissAfterDelay(() => _claudeSaveSuccess = false);
+            Snackbar.Add("Claude AI settings saved!", Severity.Success);
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("Failed to save Claude AI settings.", Severity.Error);
+        }
+        finally
+        {
+            _claudeSaving = false;
+        }
+    }
+
+    private void ToggleClaudeKeyVisibility() => _claudeKeyVisible = !_claudeKeyVisible;
 }

@@ -1,0 +1,781 @@
+@page "/daily-summary"
+@page "/daily-summary/{DateParam}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject DailySummaryService SummaryService
+@inject AiSummaryService AiSummaryService
+@inject NavigationManager NavigationManager
+@inject DataRefreshService RefreshService
+@inject ClaudeDataDiscoveryService DiscoveryService
+@inject ConversationCacheService CacheService
+
+<PageTitle>Daily Summary - Claude TraceHub</PageTitle>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading daily summary...</MudText>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    @* Header with Date Navigation *@
+    <div class="d-flex align-center justify-space-between mb-4 flex-wrap gap-2">
+        <MudText Typo="Typo.h4">Daily Summary</MudText>
+        <div class="d-flex align-center gap-2">
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronLeft" Size="Size.Medium"
+                           OnClick="PreviousDay" />
+            <MudDatePicker Date="_selectedDate" DateChanged="OnDateChanged"
+                           Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Style="max-width: 180px;" />
+            <MudIconButton Icon="@Icons.Material.Filled.ChevronRight" Size="Size.Medium"
+                           OnClick="NextDay"
+                           Disabled="@(_selectedDate?.Date >= DateTime.Today)" />
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.Today" OnClick="GoToToday">
+                Today
+            </MudButton>
+        </div>
+    </div>
+
+    @* Project Filter *@
+    @if (_availableProjects.Count > 1)
+    {
+        <MudSelect T="string" Value="_selectedProjectDirName" ValueChanged="OnProjectFilterChanged"
+                   Label="Filter by Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                   Clearable="true" Class="mb-4" Style="max-width: 350px;"
+                   Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.FilterList">
+            @foreach (var proj in _availableProjects)
+            {
+                <MudSelectItem T="string" Value="@proj.DirName">@proj.Name</MudSelectItem>
+            }
+        </MudSelect>
+    }
+
+    @* 30-Day Activity Bar Chart *@
+    <MudPaper Elevation="2" Class="pa-4 mb-4 chart-panel">
+        <div class="chart-header">
+            <MudText Typo="Typo.h6">Activity - Last 30 Days</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                @(_selectedDate?.ToString("MMM dd, yyyy") ?? "Today")
+            </MudChip>
+        </div>
+        <MudChart ChartType="ChartType.Bar" ChartSeries="@_activitySeries"
+                  XAxisLabels="@_activityLabels" Width="100%" Height="200px"
+                  ChartOptions="@_barChartOptions" />
+    </MudPaper>
+
+    @if (_stats.ConversationCount == 0)
+    {
+        @* Empty State *@
+        <MudPaper Elevation="0" Class="pa-6 text-center daily-empty-state">
+            <MudIcon Icon="@Icons.Material.Filled.EventBusy" Size="Size.Large" Color="Color.Secondary" />
+            <MudText Typo="Typo.h6" Class="mt-3">No Activity</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-1">
+                No conversations found for @(_selectedDate?.ToString("MMMM dd, yyyy") ?? "today").
+            </MudText>
+        </MudPaper>
+    }
+    else
+    {
+        @* Daily Stats Cards *@
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="stats-card stats-primary">
+                    <MudCardContent Class="text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Chat" Color="Color.Primary" Size="Size.Large" />
+                        <div class="stats-card-value mt-2">@_stats.ConversationCount</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Conversations</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="stats-card stats-info">
+                    <MudCardContent Class="text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Message" Color="Color.Info" Size="Size.Large" />
+                        <div class="stats-card-value mt-2">@FormatNumber(_stats.MessageCount)</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Messages</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="stats-card stats-warning">
+                    <MudCardContent Class="text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Warning" Size="Size.Large" />
+                        <div class="stats-card-value mt-2">@_stats.ProjectCount</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Projects Active</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudCard Elevation="2" Class="stats-card stats-success">
+                    <MudCardContent Class="text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.Speed" Color="Color.Success" Size="Size.Large" />
+                        <div class="stats-card-value mt-2">@(_stats.ConversationCount > 0 ? (_stats.MessageCount / _stats.ConversationCount).ToString() : "0")</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Msgs/Conv</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        @* Day Summary Paragraph *@
+        @if (!string.IsNullOrEmpty(_daySummary) || !string.IsNullOrEmpty(_aiSummary) || _aiSummaryLoading)
+        {
+            <MudPaper Elevation="1" Class="pa-4 mb-4 daily-summary-paragraph">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.Summarize" Size="Size.Small" Color="Color.Primary" />
+                        <MudText Typo="Typo.subtitle2" Color="Color.Primary">Day at a Glance</MudText>
+                        @if (!string.IsNullOrEmpty(_aiSummary))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary"
+                                     Variant="Variant.Filled" Class="ai-badge">AI</MudChip>
+                        }
+                    </div>
+                    @if (AiSummaryService.IsConfigured && !_aiSummaryLoading)
+                    {
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                       Color="Color.Primary" OnClick="RegenerateAiSummary" />
+                    }
+                </div>
+                @if (_aiSummaryLoading)
+                {
+                    <div class="d-flex align-center gap-2">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Generating AI summary...</MudText>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_daySummary))
+                    {
+                        <MudText Typo="Typo.body2" Class="mt-2">@_daySummary</MudText>
+                    }
+                }
+                else if (!string.IsNullOrEmpty(_aiSummary))
+                {
+                    <MudText Typo="Typo.body2">@_aiSummary</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2">@_daySummary</MudText>
+                }
+            </MudPaper>
+        }
+
+        @* Conversations List *@
+        <MudText Typo="Typo.h6" Class="mb-2">
+            Conversations (@_sessions.Count)
+        </MudText>
+
+        <MudExpansionPanels MultiExpansion="true" Elevation="1" Class="mb-4 daily-conv-panel">
+            @foreach (var session in _sessions)
+            {
+                var sid = session.SessionId;
+                <MudExpansionPanel @bind-Expanded="_expandedStates[sid]" @bind-Expanded:after="() => OnConversationExpanded(session)">
+                    <TitleContent>
+                        <div class="d-flex align-center gap-2 flex-wrap" style="width: 100%;">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary"
+                                     Variant="Variant.Outlined">@Truncate(session.ProjectName, 20)</MudChip>
+                            <MudText Typo="Typo.body2" Style="font-weight: 600; flex: 1; min-width: 100px;">
+                                @Truncate(session.FirstPrompt, 80)
+                            </MudText>
+                            <MudSpacer />
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                @(session.Created?.ToString("HH:mm") ?? "")
+                            </MudText>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     Style="font-size: 10px;">
+                                @session.MessageCount msgs
+                            </MudChip>
+                            @if (!string.IsNullOrEmpty(session.GitBranch))
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                         Color="Color.Info" Style="font-size: 10px;">
+                                    @Truncate(session.GitBranch, 25)
+                                </MudChip>
+                            }
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        @{
+                            var detail = _conversationDetails.GetValueOrDefault(session.SessionId);
+                            var isLoading = _loadingDetails.Contains(session.SessionId);
+                        }
+                        @if (isLoading || detail == null)
+                        {
+                            <div class="d-flex justify-center pa-4">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                            </div>
+                        }
+                        else
+                        {
+                            @* Detail Grid *@
+                            <MudGrid Class="mb-3 daily-conv-detail">
+                                <MudItem xs="6" sm="3">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Duration</MudText>
+                                    <MudText Typo="Typo.body2"><b>@FormatDuration(detail.Duration)</b></MudText>
+                                </MudItem>
+                                <MudItem xs="6" sm="3">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Tokens (In / Out)</MudText>
+                                    <MudText Typo="Typo.body2">
+                                        <b>@FormatNumber(detail.InputTokens)</b> / <b>@FormatNumber(detail.OutputTokens)</b>
+                                    </MudText>
+                                </MudItem>
+                                <MudItem xs="6" sm="3">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Model</MudText>
+                                    <MudText Typo="Typo.body2">@(detail.Model ?? "-")</MudText>
+                                </MudItem>
+                                <MudItem xs="6" sm="3">
+                                    <MudText Typo="Typo.caption" Color="Color.Secondary">Files Touched</MudText>
+                                    <MudText Typo="Typo.body2"><b>@detail.FilesTouched.Count</b></MudText>
+                                </MudItem>
+                            </MudGrid>
+
+                            @* Files Touched *@
+                            @if (detail.FilesTouched.Count > 0)
+                            {
+                                var created = detail.FilesTouched.Where(f => f.Action == FileActionType.Created).ToList();
+                                var modified = detail.FilesTouched.Where(f => f.Action == FileActionType.Modified).ToList();
+                                var readFiles = detail.FilesTouched.Where(f => f.Action == FileActionType.Read).ToList();
+
+                                <MudExpansionPanels Elevation="0" Class="mb-2">
+                                    <MudExpansionPanel Dense="true">
+                                        <TitleContent>
+                                            <div class="d-flex align-center gap-2">
+                                                <MudIcon Icon="@Icons.Material.Filled.InsertDriveFile" Size="Size.Small" />
+                                                <MudText Typo="Typo.body2"><b>Files (@detail.FilesTouched.Count)</b></MudText>
+                                                @if (created.Count > 0)
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">@created.Count created</MudChip>
+                                                }
+                                                @if (modified.Count > 0)
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">@modified.Count modified</MudChip>
+                                                }
+                                            </div>
+                                        </TitleContent>
+                                        <ChildContent>
+                                            @if (created.Count > 0)
+                                            {
+                                                <div class="files-group">
+                                                    <div class="files-group-header">
+                                                        <MudIcon Icon="@Icons.Material.Filled.NoteAdd" Size="Size.Small" Class="mr-1" Style="color: #4CAF50;" />
+                                                        Created (@created.Count)
+                                                    </div>
+                                                    @foreach (var f in created)
+                                                    {
+                                                        <div class="file-item created">
+                                                            <span class="file-path">@f.FilePath</span>
+                                                            @if (f.Count > 1)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            @if (modified.Count > 0)
+                                            {
+                                                <div class="files-group">
+                                                    <div class="files-group-header">
+                                                        <MudIcon Icon="@Icons.Material.Filled.EditNote" Size="Size.Small" Class="mr-1" Style="color: #FF9800;" />
+                                                        Modified (@modified.Count)
+                                                    </div>
+                                                    @foreach (var f in modified)
+                                                    {
+                                                        <div class="file-item modified">
+                                                            <span class="file-path">@f.FilePath</span>
+                                                            @if (f.Count > 1)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                            @if (readFiles.Count > 0)
+                                            {
+                                                <div class="files-group">
+                                                    <div class="files-group-header">
+                                                        <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Class="mr-1" Style="color: #2196F3;" />
+                                                        Read (@readFiles.Count)
+                                                    </div>
+                                                    @foreach (var f in readFiles)
+                                                    {
+                                                        <div class="file-item read">
+                                                            <span class="file-path">@f.FilePath</span>
+                                                            @if (f.Count > 1)
+                                                            {
+                                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.Count ops</MudChip>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </ChildContent>
+                                    </MudExpansionPanel>
+                                </MudExpansionPanels>
+                            }
+
+                            @* Tool Usage Summary *@
+                            @if (detail.ToolUsageSummary.Count > 0)
+                            {
+                                <div class="daily-tool-chips">
+                                    @foreach (var tool in detail.ToolUsageSummary.OrderByDescending(t => t.Value))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">
+                                            @tool.Key: @tool.Value
+                                        </MudChip>
+                                    }
+                                </div>
+                            }
+
+                            @* View Full Conversation Link *@
+                            <div class="mt-3">
+                                <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small"
+                                           StartIcon="@Icons.Material.Filled.OpenInNew"
+                                           OnClick="() => NavigateToConversation(session)">
+                                    View Full Conversation
+                                </MudButton>
+                            </div>
+                        }
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
+
+        @* Hourly Token Usage Chart *@
+        <MudPaper Elevation="2" Class="pa-4 mb-4 chart-panel daily-token-chart">
+            <div class="chart-header">
+                <MudText Typo="Typo.h6">Token Usage by Hour</MudText>
+                @if (!_tokenChartLoaded && !_tokenChartLoading)
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                               OnClick="LoadTokenChart" StartIcon="@Icons.Material.Filled.BarChart">
+                        Load Chart
+                    </MudButton>
+                }
+            </div>
+            @if (_tokenChartLoading)
+            {
+                <div class="d-flex align-center justify-center" style="height: 200px;">
+                    <MudProgressCircular Size="Size.Medium" Indeterminate="true" />
+                </div>
+            }
+            else if (_tokenChartLoaded)
+            {
+                <MudChart ChartType="ChartType.Bar" ChartSeries="@_tokenSeries"
+                          XAxisLabels="@_hourLabels" Width="100%" Height="250px"
+                          ChartOptions="@_tokenChartOptions" />
+                <div class="chart-summary">
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@FormatNumber(_totalInputTokens)</span>
+                        <span class="chart-summary-label">Input Tokens</span>
+                    </div>
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@FormatNumber(_totalOutputTokens)</span>
+                        <span class="chart-summary-label">Output Tokens</span>
+                    </div>
+                    <div class="chart-summary-item">
+                        <span class="chart-summary-value">@FormatNumber(_totalInputTokens + _totalOutputTokens)</span>
+                        <span class="chart-summary-label">Total</span>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="d-flex align-center justify-center" style="height: 150px;">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Click "Load Chart" to compute token usage (requires parsing conversation files)
+                    </MudText>
+                </div>
+            }
+        </MudPaper>
+
+        @* Daily File Activity *@
+        <MudPaper Elevation="2" Class="pa-4 mb-4 chart-panel">
+            <div class="chart-header">
+                <MudText Typo="Typo.h6">All Files Changed Today</MudText>
+                @if (!_fileActivityLoaded && !_fileActivityLoading)
+                {
+                    <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                               OnClick="LoadFileActivity" StartIcon="@Icons.Material.Filled.InsertDriveFile">
+                        Load Files
+                    </MudButton>
+                }
+            </div>
+            @if (_fileActivityLoading)
+            {
+                <div class="d-flex align-center justify-center" style="height: 150px;">
+                    <MudProgressCircular Size="Size.Medium" Indeterminate="true" />
+                </div>
+            }
+            else if (_fileActivityLoaded)
+            {
+                @if (_dailyFileActivity.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No file changes found.</MudText>
+                }
+                else
+                {
+                    var createdFiles = _dailyFileActivity.Where(f => f.Action == FileActionType.Created).ToList();
+                    var modifiedFiles = _dailyFileActivity.Where(f => f.Action == FileActionType.Modified).ToList();
+                    var readFilesAgg = _dailyFileActivity.Where(f => f.Action == FileActionType.Read).ToList();
+
+                    @if (createdFiles.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.NoteAdd" Size="Size.Small" Class="mr-1" Style="color: #4CAF50;" />
+                                Created (@createdFiles.Count)
+                            </div>
+                            @foreach (var f in createdFiles)
+                            {
+                                <div class="file-item created">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.TotalOperations ops</MudChip>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" Style="font-size: 10px;">@f.SessionIds.Count sessions</MudChip>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (modifiedFiles.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.EditNote" Size="Size.Small" Class="mr-1" Style="color: #FF9800;" />
+                                Modified (@modifiedFiles.Count)
+                            </div>
+                            @foreach (var f in modifiedFiles)
+                            {
+                                <div class="file-item modified">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.TotalOperations ops</MudChip>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" Style="font-size: 10px;">@f.SessionIds.Count sessions</MudChip>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    @if (readFilesAgg.Count > 0)
+                    {
+                        <div class="files-group">
+                            <div class="files-group-header">
+                                <MudIcon Icon="@Icons.Material.Filled.Visibility" Size="Size.Small" Class="mr-1" Style="color: #2196F3;" />
+                                Read (@readFilesAgg.Count)
+                            </div>
+                            @foreach (var f in readFilesAgg)
+                            {
+                                <div class="file-item read">
+                                    <span class="file-path">@f.FilePath</span>
+                                    <div class="d-flex align-center gap-1">
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Style="font-size: 10px;">@f.TotalOperations ops</MudChip>
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info" Style="font-size: 10px;">@f.SessionIds.Count sessions</MudChip>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            }
+            else
+            {
+                <div class="d-flex align-center justify-center" style="height: 150px;">
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">
+                        Click "Load Files" to see all files changed across conversations
+                    </MudText>
+                </div>
+            }
+        </MudPaper>
+    }
+
+    </div>
+}
+
+@code {
+    [Parameter] public string? DateParam { get; set; }
+
+    private bool _loading = true;
+    private bool _disposed;
+    private DateTime? _selectedDate;
+    private string? _selectedProjectDirName;
+
+    // Lightweight data
+    private DailyStats _stats = new();
+    private List<SessionSummary> _sessions = new();
+    private List<(string DirName, string Name)> _availableProjects = new();
+
+    // Day summary paragraph
+    private string _daySummary = "";
+    private string? _aiSummary;
+    private bool _aiSummaryLoading;
+
+    // Activity chart
+    private List<ChartSeries> _activitySeries = new();
+    private string[] _activityLabels = Array.Empty<string>();
+
+    // On-demand conversation details
+    private Dictionary<string, DailyConversationDetail> _conversationDetails = new();
+    private HashSet<string> _loadingDetails = new();
+    private Dictionary<string, bool> _expandedStates = new();
+
+    // Token chart (lazy)
+    private bool _tokenChartLoaded;
+    private bool _tokenChartLoading;
+    private List<ChartSeries> _tokenSeries = new();
+    private long _totalInputTokens;
+    private long _totalOutputTokens;
+    private readonly string[] _hourLabels = Enumerable.Range(0, 24)
+        .Select(h => h % 3 == 0 ? $"{h:D2}:00" : "").ToArray();
+
+    // File activity (lazy)
+    private bool _fileActivityLoaded;
+    private bool _fileActivityLoading;
+    private List<DailyFileActivity> _dailyFileActivity = new();
+
+    // Chart options
+    private readonly ChartOptions _barChartOptions = new()
+    {
+        YAxisTicks = 5,
+        MaxNumYAxisTicks = 8
+    };
+    private readonly ChartOptions _tokenChartOptions = new()
+    {
+        YAxisTicks = 5,
+        MaxNumYAxisTicks = 8
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        _selectedDate = ParseDateParam(DateParam) ?? DateTime.Today;
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var newDate = ParseDateParam(DateParam) ?? DateTime.Today;
+        if (newDate.Date != _selectedDate?.Date)
+        {
+            _selectedDate = newDate;
+            await ReloadForDate();
+        }
+    }
+
+    private async Task LoadDataAsync()
+    {
+        await Task.Run(() =>
+        {
+            var date = _selectedDate ?? DateTime.Today;
+            _stats = SummaryService.GetDailyStats(date, _selectedProjectDirName);
+            _sessions = SummaryService.GetSessionsForDate(date, _selectedProjectDirName);
+            _availableProjects = SummaryService.GetActiveProjectsForDate(date);
+            _daySummary = SummaryService.GenerateDaySummary(date, _sessions, _stats);
+
+            // 30-day activity chart
+            var activity = SummaryService.GetActivityOverDays(30);
+            _activityLabels = activity.Select((a, i) =>
+                i % 5 == 0 || i == activity.Count - 1 ? a.Date.ToString("MMM dd") : ""
+            ).ToArray();
+            _activitySeries = new List<ChartSeries>
+            {
+                new() { Name = "Conversations", Data = activity.Select(a => (double)a.ConversationCount).ToArray() }
+            };
+        });
+
+        // Reset heavy data on date/filter change
+        _conversationDetails.Clear();
+        _loadingDetails.Clear();
+        _expandedStates = _sessions.ToDictionary(s => s.SessionId, _ => false);
+        _tokenChartLoaded = false;
+        _tokenChartLoading = false;
+        _fileActivityLoaded = false;
+        _fileActivityLoading = false;
+        _aiSummary = null;
+
+        // Fire-and-forget AI summary generation
+        if (AiSummaryService.IsConfigured && _sessions.Count > 0)
+        {
+            _ = LoadAiSummaryAsync();
+        }
+    }
+
+    private async Task LoadAiSummaryAsync(bool forceRefresh = false)
+    {
+        _aiSummaryLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var date = _selectedDate ?? DateTime.Today;
+            var result = await AiSummaryService.GenerateAiDaySummaryAsync(
+                date, _sessions, _stats, forceRefresh);
+
+            if (!_disposed && result != null)
+            {
+                _aiSummary = result;
+            }
+        }
+        catch
+        {
+            // Silently fall back to local summary
+        }
+        finally
+        {
+            _aiSummaryLoading = false;
+            if (!_disposed)
+                StateHasChanged();
+        }
+    }
+
+    private async Task RegenerateAiSummary()
+    {
+        _aiSummary = null;
+        await LoadAiSummaryAsync(forceRefresh: true);
+    }
+
+    private async Task ReloadForDate()
+    {
+        _loading = true;
+        StateHasChanged();
+        await LoadDataAsync();
+        _loading = false;
+        StateHasChanged();
+    }
+
+    // Date navigation
+    private async Task OnDateChanged(DateTime? date)
+    {
+        if (date == null) return;
+        _selectedDate = date;
+        NavigationManager.NavigateTo($"/daily-summary/{date:yyyy-MM-dd}", replace: true);
+        await ReloadForDate();
+    }
+
+    private Task PreviousDay() => OnDateChanged(_selectedDate?.AddDays(-1));
+    private Task NextDay() => OnDateChanged(_selectedDate?.AddDays(1));
+    private Task GoToToday() => OnDateChanged(DateTime.Today);
+
+    // Project filter
+    private async Task OnProjectFilterChanged(string? value)
+    {
+        _selectedProjectDirName = value;
+        await ReloadForDate();
+    }
+
+    // On-demand conversation expansion
+    private async Task OnConversationExpanded(SessionSummary session)
+    {
+        if (!_expandedStates.GetValueOrDefault(session.SessionId)) return;
+        if (_conversationDetails.ContainsKey(session.SessionId)) return;
+        if (_loadingDetails.Contains(session.SessionId)) return;
+
+        _loadingDetails.Add(session.SessionId);
+        StateHasChanged();
+
+        var detail = await Task.Run(() => SummaryService.GetConversationDetail(session));
+        _conversationDetails[session.SessionId] = detail;
+        _loadingDetails.Remove(session.SessionId);
+        StateHasChanged();
+    }
+
+    // Lazy load: token chart
+    private async Task LoadTokenChart()
+    {
+        _tokenChartLoading = true;
+        StateHasChanged();
+
+        var hourly = await Task.Run(() =>
+            SummaryService.GetHourlyTokenUsage(_selectedDate ?? DateTime.Today, _selectedProjectDirName));
+
+        _totalInputTokens = hourly.Sum(h => h.InputTokens);
+        _totalOutputTokens = hourly.Sum(h => h.OutputTokens);
+
+        _tokenSeries = new List<ChartSeries>
+        {
+            new() { Name = "Input Tokens", Data = hourly.Select(h => (double)h.InputTokens).ToArray() },
+            new() { Name = "Output Tokens", Data = hourly.Select(h => (double)h.OutputTokens).ToArray() }
+        };
+        _tokenChartLoaded = true;
+        _tokenChartLoading = false;
+        StateHasChanged();
+    }
+
+    // Lazy load: file activity
+    private async Task LoadFileActivity()
+    {
+        _fileActivityLoading = true;
+        StateHasChanged();
+
+        _dailyFileActivity = await Task.Run(() =>
+            SummaryService.GetDailyFileActivity(_selectedDate ?? DateTime.Today, _selectedProjectDirName));
+
+        _fileActivityLoaded = true;
+        _fileActivityLoading = false;
+        StateHasChanged();
+    }
+
+    private void NavigateToConversation(SessionSummary session)
+    {
+        NavigationManager.NavigateTo($"/conversation/{session.ProjectDirName}/{session.SessionId}");
+    }
+
+    // Refresh handler
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    // Helpers
+    private static DateTime? ParseDateParam(string? param)
+    {
+        if (string.IsNullOrEmpty(param)) return null;
+        return DateTime.TryParseExact(param, "yyyy-MM-dd", null,
+            System.Globalization.DateTimeStyles.None, out var dt) ? dt : null;
+    }
+
+    private static string FormatDuration(TimeSpan? duration)
+    {
+        if (duration == null) return "-";
+        var d = duration.Value;
+        if (d.TotalHours >= 1) return $"{(int)d.TotalHours}h {d.Minutes}m";
+        if (d.TotalMinutes >= 1) return $"{(int)d.TotalMinutes}m";
+        return $"{d.Seconds}s";
+    }
+
+    private static string FormatNumber(long num)
+    {
+        return num >= 1_000_000 ? $"{num / 1_000_000.0:F1}M"
+             : num >= 1_000 ? $"{num / 1_000.0:F1}K"
+             : num.ToString();
+    }
+
+    private static string FormatNumber(int num) => FormatNumber((long)num);
+
+    private static string Truncate(string? text, int max)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}
