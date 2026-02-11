@@ -90,6 +90,7 @@ ClaudeTraceHub/
     ├── Models/                           # Data models (POCOs)
     │   ├── AzureDevOpsSettings.cs        #   TFS connection settings
     │   ├── ConversationModels.cs         #   Core domain models
+    │   ├── DailySummaryModels.cs         #   Daily summary analytics models
     │   ├── DashboardModels.cs            #   Dashboard chart data
     │   ├── JsonlModels.cs               #   JSONL file deserialization
     │   └── TfsModels.cs                 #   TFS work item models
@@ -98,6 +99,7 @@ ClaudeTraceHub/
     │   ├── ClaudeDataDiscoveryService.cs #   Discovers projects & sessions
     │   ├── JsonlParserService.cs         #   Parses JSONL → Conversation
     │   ├── ConversationCacheService.cs   #   In-memory cache for parsed data
+    │   ├── DailySummaryService.cs        #   Daily analytics & summary generation
     │   ├── DashboardService.cs           #   Aggregates dashboard statistics
     │   ├── DataRefreshService.cs         #   FileSystemWatcher for live updates
     │   ├── AzureDevOpsService.cs         #   TFS/Azure DevOps REST client
@@ -121,6 +123,7 @@ ClaudeTraceHub/
     │       ├── Projects.razor            #   Project listing (route: /projects)
     │       ├── ProjectDetail.razor       #   Sessions for a project (route: /project/{id})
     │       ├── ConversationViewer.razor   #   Full conversation view (route: /conversation/{proj}/{session})
+    │       ├── DailySummary.razor         #   Daily summary analytics (route: /daily-summary)
     │       ├── TfsWorkItemExplorer.razor  #   TFS work item explorer (route: /tfs-explorer)
     │       ├── Settings.razor            #   Azure DevOps settings (route: /settings)
     │       ├── FileChangeDialog.razor    #   Dialog: GitHub-style diff viewer
@@ -131,7 +134,7 @@ ClaudeTraceHub/
     │   └── launchSettings.json           # VS launch profiles
     │
     └── wwwroot/                          # Static web assets
-        ├── app.css                       #   Global styles (~1570 lines)
+        ├── app.css                       #   Global styles (~1640 lines)
         ├── favicon.png                   #   App icon
         └── js/
             └── download.js              #   JS interop for file downloads
@@ -207,6 +210,7 @@ tracehub.bat status
 │  (One instance per SignalR circuit / user session)       │
 │                                                          │
 │  DashboardService            - Dashboard aggregations    │
+│  DailySummaryService         - Daily analytics & summary │
 │  ExcelExportService          - Excel file generation     │
 │  ThemeService                - Per-user theme state      │
 │  TfsWorkItemFilterService    - Branch scan orchestration │
@@ -414,6 +418,16 @@ Maps to Claude Code's JSONL format:
 | `TokenUsagePoint`    | Token usage over time           |
 | `ModelDistribution`  | Donut chart data point          |
 
+### DailySummaryModels.cs — Daily Analytics
+
+| Class                   | Purpose                                              |
+|-------------------------|------------------------------------------------------|
+| `DailyStats`            | Aggregated stats for a specific date                 |
+| `DailyConversationDetail`| Expanded per-conversation info (tokens, tools, files)|
+| `DailyFileActivity`     | File operations aggregated across conversations      |
+| `HourlyTokenUsage`      | Hourly token breakdown (0–23) for bar chart          |
+| `DailyActivityPoint`    | Per-day activity point for the 30-day mini chart     |
+
 ### AzureDevOpsSettings.cs — Configuration Model
 
 Bound from `appsettings.json` + `usersettings.json`. Contains `OrganizationUrl`, `PersonalAccessToken`, `Projects`, `ApiVersion`, `BranchWorkItemPatterns`, and a computed `IsConfigured` property.
@@ -472,6 +486,24 @@ Aggregates data for the dashboard page:
 - **Stats:** total conversations, messages, active projects (30 days)
 - **Charts:** conversations per day (30 days), messages per project (top 10), model distribution (samples 50 recent sessions)
 - **Recent:** latest 15-20 conversations
+
+---
+
+### DailySummaryService (Scoped)
+
+**File:** `Services/DailySummaryService.cs`
+
+Provides daily analytics and summary generation. Uses lightweight `SessionSummary` data for fast aggregation, with on-demand full parsing for conversation detail expansion.
+
+**Key Methods:**
+- `GetSessionsForDate(date, projectDirName?)` → sessions for a specific date, optionally filtered by project
+- `GetDailyStats(date, projectDirName?)` → aggregate stats (conversation/message/project counts)
+- `GetActivityOverDays(days)` → 30-day activity points for the mini bar chart
+- `GetActiveProjectsForDate(date)` → distinct projects active on a given date
+- `GetConversationDetail(session)` → full conversation detail (tokens, tools, files touched)
+- `GetDailyFileActivity(date, projectDirName?)` → file operations aggregated across conversations
+- `GetHourlyTokenUsage(date, projectDirName?)` → 24-hour token breakdown for the hourly chart
+- `GenerateDaySummary(date, sessions, stats)` → human-readable day summary text
 
 ---
 
@@ -542,7 +574,7 @@ Writes Azure DevOps settings to `usersettings.json`. Works with the configuratio
 - **Content area:** Setup guard (redirects to Settings if not configured) or page body
 
 **NavMenu.razor** — Sidebar navigation with:
-- Dashboard, Projects, TFS Explorer, Settings links
+- Dashboard, Projects, Daily Summary, TFS Explorer, Settings links
 - Version and copyright footer (read from assembly metadata)
 
 ### Pages
@@ -571,6 +603,19 @@ Full conversation display with:
 - **Message Thread:** Vertical timeline with user/assistant avatars, Markdown-rendered message content, expandable tool usage details, metadata (timestamp, model, tokens)
 - **Export to Excel** button
 
+#### Daily Summary (`/daily-summary`, `/daily-summary/{DateParam}`)
+**File:** `DailySummary.razor`
+
+Date-navigable daily analytics page with:
+- **Date navigation:** Previous/Next day buttons, date picker, Today shortcut
+- **Project filter:** Dropdown to scope all data to a single project
+- **30-day activity bar chart:** Conversation and message counts per day
+- **Daily stats cards:** Conversations, Messages, Active Projects for the selected date
+- **Hourly token usage chart:** 24-hour input/output token breakdown
+- **Conversation cards:** Expandable cards with detail (tokens, tools used, files touched, duration)
+- **Files changed list:** Aggregated file operations across all conversations for the day
+- **Day summary text:** Human-readable narrative summary of the day's activity
+
 #### TFS Work Item Explorer (`/tfs-explorer`)
 **File:** `TfsWorkItemExplorer.razor`
 
@@ -595,7 +640,7 @@ Shows work items discovered for a git branch. Grouped by type (Requirements, Cha
 
 ### CSS Architecture
 
-**File:** `wwwroot/app.css` (~1570 lines)
+**File:** `wwwroot/app.css` (~1640 lines)
 
 Organized into numbered sections:
 1. Background
@@ -613,6 +658,7 @@ Organized into numbered sections:
 13. TFS Work Item Explorer — Filter panel, scan progress, cards
 14. Markdown Rendered Content — Full GFM styling
 15. Setup Guard / First-Run Screen
+16. Daily Summary — Day summary text, conversation panels, tool chips, token chart
 
 ### Theme System
 
@@ -634,7 +680,7 @@ Custom-styled reconnect modal (replaces Blazor's default). Dark overlay with blu
 **File:** `Directory.Build.props`
 
 ```xml
-<Version>1.0.0</Version>
+<Version>1.2.0</Version>
 ```
 
 This single `<Version>` property drives `AssemblyVersion`, `FileVersion`, and `InformationalVersion` automatically via the .NET SDK.
@@ -704,7 +750,7 @@ Main CLI entry point. Commands:
 | File                    | Description                                     |
 |-------------------------|-------------------------------------------------|
 | `ClaudeTraceHub.sln`   | VS solution file (single project)               |
-| `Directory.Build.props` | Centralized version (1.0.0), author, description|
+| `Directory.Build.props` | Centralized version (1.2.0), author, description|
 | `global.json`           | Pins SDK to 9.0.308                             |
 | `.gitignore`            | .NET/Blazor template + project-specific ignores |
 | `tracehub.bat`          | Main CLI (publish, run, autostart, status, version)|
@@ -729,17 +775,18 @@ Main CLI entry point. Commands:
 | `usersettings.json`               | User-saved Azure DevOps connection   |
 | `Properties/launchSettings.json`  | VS launch profiles (port 5204)       |
 
-### Models (5 files)
+### Models (6 files)
 
 | File                       | Key Types                                              |
 |----------------------------|--------------------------------------------------------|
 | `AzureDevOpsSettings.cs`  | `AzureDevOpsSettings` (config binding)                 |
 | `ConversationModels.cs`   | `Conversation`, `ConversationMessage`, `ToolUsageInfo`, `FileChangeTimeline`, `DiffLine`, `DiffHunk` |
+| `DailySummaryModels.cs`   | `DailyStats`, `DailyConversationDetail`, `DailyFileActivity`, `HourlyTokenUsage`, `DailyActivityPoint` |
 | `DashboardModels.cs`      | `DashboardStats`, `ConversationsPerDay`, `ModelDistribution` |
 | `JsonlModels.cs`          | `JsonlEntry`, `JsonlMessage`, `JsonlContentBlock`, `SessionsIndex` |
 | `TfsModels.cs`            | `TfsWorkItem`, `TfsQueryResult`, `WorkItemScanResult`, `ScanProgress` |
 
-### Services (11 files)
+### Services (12 files)
 
 | File                            | Lifetime    | Purpose                         |
 |---------------------------------|-------------|----------------------------------|
@@ -748,6 +795,7 @@ Main CLI entry point. Commands:
 | `ConversationCacheService.cs`  | Singleton   | Memory cache with invalidation   |
 | `DataRefreshService.cs`        | Singleton+Hosted | FileSystemWatcher for live updates |
 | `SettingsService.cs`           | Singleton   | Writes usersettings.json         |
+| `DailySummaryService.cs`       | Scoped      | Daily analytics & summary        |
 | `DashboardService.cs`          | Scoped      | Dashboard data aggregation       |
 | `ExcelExportService.cs`        | Scoped      | Excel workbook generation        |
 | `ThemeService.cs`              | Scoped      | Theme + dark mode state          |
@@ -755,7 +803,7 @@ Main CLI entry point. Commands:
 | `AzureDevOpsService.cs`        | HttpClient  | Azure DevOps REST API            |
 | `LineDiffHelper.cs`            | Static      | LCS diff algorithm               |
 
-### Components (14 files)
+### Components (15 files)
 
 | File                          | Route                                | Purpose                    |
 |-------------------------------|--------------------------------------|----------------------------|
@@ -768,6 +816,7 @@ Main CLI entry point. Commands:
 | `Projects.razor`              | `/projects`                          | Project listing            |
 | `ProjectDetail.razor`         | `/project/{ProjectDirName}`          | Project sessions           |
 | `ConversationViewer.razor`    | `/conversation/{proj}/{session}`     | Full conversation          |
+| `DailySummary.razor`          | `/daily-summary`, `/daily-summary/{date}` | Daily analytics     |
 | `TfsWorkItemExplorer.razor`   | `/tfs-explorer`                      | TFS work item explorer     |
 | `Settings.razor`              | `/settings`                          | Azure DevOps settings      |
 | `FileChangeDialog.razor`      | - (dialog)                           | GitHub-style diff viewer   |
@@ -778,7 +827,7 @@ Main CLI entry point. Commands:
 
 | File                  | Description                                      |
 |-----------------------|--------------------------------------------------|
-| `wwwroot/app.css`     | Global styles (~1570 lines, 15 sections)         |
+| `wwwroot/app.css`     | Global styles (~1640 lines, 16 sections)         |
 | `wwwroot/js/download.js` | JS interop: creates blob download from byte array |
 | `wwwroot/favicon.png` | Application icon                                 |
 
@@ -811,6 +860,7 @@ Main CLI entry point. Commands:
     │  Discovery → Parse   │──────────► Dashboard
     │  → Cache → Display   │──────────► Project Browser
     │                      │──────────► Conversation Viewer
+    │                      │──────────► Daily Summary
     │  Azure DevOps API ◄──│──────────► TFS Explorer
     │                      │──────────► Settings
     └──────────┬───────────┘

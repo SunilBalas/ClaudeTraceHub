@@ -9,6 +9,7 @@ ClaudeTraceHub automatically discovers conversation data from `~/.claude/project
 - **Dashboard** — Activity charts (conversations per day, model usage distribution), stat cards, top projects, and recent conversation list
 - **Project Browser** — Searchable, sortable listing of all discovered Claude Code projects with session counts and last activity
 - **Conversation Viewer** — Full conversation timeline with markdown rendering, tool usage details, token metadata, and files touched panel
+- **Daily Summary** — Date-navigable analytics page with daily stats, hourly token usage charts, expandable conversation cards, file activity, and narrative day summaries
 - **File Change Diffs** — GitHub-style unified diffs showing step-by-step file modifications made during conversations
 - **TFS Work Item Explorer** — Links conversations to Azure DevOps work items via PR matching and branch name pattern extraction
 - **Excel Export** — Export any conversation to `.xlsx` with structured message and metadata sheets
@@ -68,6 +69,7 @@ ClaudeTraceHub/
     ├── Program.cs                      # Service registration & startup
     ├── Models/                         # Data models
     │   ├── ConversationModels.cs       # Core domain (Project, Session, Message, Diff)
+    │   ├── DailySummaryModels.cs       # Daily analytics models
     │   ├── JsonlModels.cs             # JSONL deserialization
     │   ├── TfsModels.cs               # Work item models
     │   ├── DashboardModels.cs         # Dashboard statistics
@@ -76,6 +78,7 @@ ClaudeTraceHub/
     │   ├── ClaudeDataDiscoveryService  # Project & session discovery
     │   ├── JsonlParserService          # JSONL parsing (fast + full modes)
     │   ├── ConversationCacheService    # Memory cache with file-change invalidation
+    │   ├── DailySummaryService         # Daily analytics & summary generation
     │   ├── DataRefreshService          # FileSystemWatcher for live updates
     │   ├── DashboardService            # Dashboard aggregations
     │   ├── AzureDevOpsService          # Azure DevOps REST API client
