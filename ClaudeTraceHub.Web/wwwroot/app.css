@@ -1572,6 +1572,16 @@ html, body {
    16. DAILY SUMMARY
    ============================================================ */
 
+/* Date picker popover fix - ensure calendar popup isn't constrained by parent width */
+.mud-picker .mud-popover {
+    min-width: 320px !important;
+    overflow: visible !important;
+}
+
+.mud-picker-calendar {
+    min-width: 300px !important;
+}
+
 /* Day summary paragraph */
 .daily-summary-paragraph {
     border-left: 4px solid var(--mud-palette-primary);

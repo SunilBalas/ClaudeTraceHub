@@ -221,8 +221,8 @@ public class DailySummaryService
     }
 
     /// <summary>
-    /// Generate a brief paragraph summarizing what was done on a given date.
-    /// Uses lightweight SessionSummary data only.
+    /// Generate a rich, insight-driven paragraph summarizing what was done on a given date.
+    /// Uses smart heuristics to produce varied, natural-sounding summaries without any external API.
     /// </summary>
     public string GenerateDaySummary(DateTime date, List<SessionSummary> sessions, DailyStats stats)
     {
@@ -230,49 +230,228 @@ public class DailySummaryService
             return "";
 
         var sb = new System.Text.StringBuilder();
+        var seed = date.DayOfYear + date.Year;
 
-        // Opening: date + conversation count + project context
-        var dateStr = date.Date == DateTime.Today ? "Today" : date.ToString("MMMM dd, yyyy");
-        sb.Append($"On {dateStr}, you had ");
-        sb.Append(stats.ConversationCount == 1 ? "1 conversation" : $"{stats.ConversationCount} conversations");
+        // 1. Opening sentence - varied phrasing
+        sb.Append(BuildOpening(date, sessions, stats, seed));
 
-        if (stats.ProjectCount > 0)
+        // 2. Work classification insight
+        var workInsight = BuildWorkInsight(sessions);
+        if (!string.IsNullOrEmpty(workInsight))
+            sb.Append(' ').Append(workInsight);
+
+        // 3. Focus / depth insight
+        sb.Append(' ').Append(BuildFocusInsight(sessions, stats, seed));
+
+        // 4. Time pattern insight
+        var timeInsight = BuildTimeInsight(sessions);
+        if (!string.IsNullOrEmpty(timeInsight))
+            sb.Append(' ').Append(timeInsight);
+
+        // 5. Closing detail - topics
+        var closingDetail = BuildClosingDetail(sessions);
+        if (!string.IsNullOrEmpty(closingDetail))
+            sb.Append(' ').Append(closingDetail);
+
+        return sb.ToString();
+    }
+
+    #region Smart Summary Helpers
+
+    private static string BuildOpening(DateTime date, List<SessionSummary> sessions, DailyStats stats, int seed)
+    {
+        var convText = stats.ConversationCount == 1 ? "1 conversation" : $"{stats.ConversationCount} conversations";
+        var msgText = stats.MessageCount == 1 ? "1 message" : $"{stats.MessageCount} messages";
+        var projectList = FormatProjectList(stats.ProjectNames);
+
+        var templates = new[]
         {
-            sb.Append(" across ");
-            sb.Append(stats.ProjectCount == 1 ? "1 project" : $"{stats.ProjectCount} projects");
-            var projectList = stats.ProjectNames.Take(3).ToList();
-            sb.Append($" ({string.Join(", ", projectList)}");
-            if (stats.ProjectNames.Count > 3)
-                sb.Append($" and {stats.ProjectNames.Count - 3} more");
-            sb.Append(')');
+            $"You had a {DescribeProductivity(stats)} day with {convText}{projectList}, exchanging {msgText}.",
+            $"Across {convText}{projectList}, you exchanged {msgText}{DescribeDateSuffix(date)}.",
+            $"Your {DescribeDateLabel(date)} included {convText}{projectList} with {msgText} exchanged.",
+        };
+
+        return templates[seed % templates.Length];
+    }
+
+    private static string FormatProjectList(List<string> projectNames)
+    {
+        if (projectNames.Count == 0) return "";
+        if (projectNames.Count == 1) return $" in {projectNames[0]}";
+        if (projectNames.Count == 2) return $" across {projectNames[0]} and {projectNames[1]}";
+        var listed = string.Join(", ", projectNames.Take(3));
+        var suffix = projectNames.Count > 3 ? $" and {projectNames.Count - 3} more" : "";
+        return $" across {listed}{suffix}";
+    }
+
+    private static string DescribeProductivity(DailyStats stats)
+    {
+        var avgMsgs = stats.ConversationCount > 0 ? stats.MessageCount / stats.ConversationCount : 0;
+        if (stats.ConversationCount >= 8 || stats.MessageCount >= 150) return "busy";
+        if (avgMsgs >= 25) return "productive";
+        if (stats.ConversationCount == 1) return "focused";
+        return "steady";
+    }
+
+    private static string DescribeDateSuffix(DateTime date)
+    {
+        if (date.Date == DateTime.Today) return " today";
+        if (date.Date == DateTime.Today.AddDays(-1)) return " yesterday";
+        return $" on {date:MMMM dd}";
+    }
+
+    private static string DescribeDateLabel(DateTime date)
+    {
+        if (date.Date == DateTime.Today) return "day so far";
+        if (date.Date == DateTime.Today.AddDays(-1)) return "yesterday";
+        return date.ToString("dddd");
+    }
+
+    private static string? BuildWorkInsight(List<SessionSummary> sessions)
+    {
+        var categories = ClassifyWork(sessions);
+        var parts = new List<string>();
+
+        if (categories.Features > 0)
+            parts.Add(categories.Features == 1 ? "feature development" : $"{categories.Features} feature tasks");
+        if (categories.BugFixes > 0)
+            parts.Add(categories.BugFixes == 1 ? "a bug fix" : $"{categories.BugFixes} bug fixes");
+        if (categories.Refactoring > 0)
+            parts.Add("refactoring");
+        if (categories.Chores > 0)
+            parts.Add(categories.Chores == 1 ? "a maintenance task" : "maintenance tasks");
+
+        if (parts.Count == 0) return null;
+
+        var joined = parts.Count == 1
+            ? parts[0]
+            : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts.Last();
+
+        return $"Your work included {joined}.";
+    }
+
+    private static WorkCategories ClassifyWork(List<SessionSummary> sessions)
+    {
+        var result = new WorkCategories();
+
+        foreach (var session in sessions)
+        {
+            var branch = session.GitBranch?.ToLowerInvariant() ?? "";
+            var prompt = session.FirstPrompt?.ToLowerInvariant() ?? "";
+
+            if (branch.Contains("feature/") || branch.Contains("feat/")
+                || prompt.Contains("add ") || prompt.Contains("implement") || prompt.Contains("create ")
+                || prompt.Contains("new ") || prompt.Contains("build "))
+            {
+                result.Features++;
+            }
+            else if (branch.Contains("bugfix/") || branch.Contains("hotfix/") || branch.Contains("fix/")
+                || prompt.Contains("fix ") || prompt.Contains("bug") || prompt.Contains("error")
+                || prompt.Contains("issue") || prompt.Contains("broken"))
+            {
+                result.BugFixes++;
+            }
+            else if (branch.Contains("refactor/")
+                || prompt.Contains("refactor") || prompt.Contains("clean up")
+                || prompt.Contains("reorganize") || prompt.Contains("restructure"))
+            {
+                result.Refactoring++;
+            }
+            else if (branch.Contains("chore/") || branch.Contains("ci/") || branch.Contains("docs/")
+                || prompt.Contains("update ") || prompt.Contains("bump") || prompt.Contains("config")
+                || prompt.Contains("documentation") || prompt.Contains("readme"))
+            {
+                result.Chores++;
+            }
+            else
+            {
+                result.Other++;
+            }
         }
 
-        sb.Append($", exchanging {FormatCount(stats.MessageCount, "message")}. ");
+        return result;
+    }
 
-        // Time range
-        var earliest = sessions.Where(s => s.Created.HasValue).Min(s => s.Created!.Value);
-        var latest = sessions.Where(s => s.Modified.HasValue || s.Created.HasValue)
-            .Max(s => s.Modified ?? s.Created!.Value);
-        sb.Append($"Activity spanned from {earliest:HH:mm} to {latest:HH:mm}. ");
+    private static string BuildFocusInsight(List<SessionSummary> sessions, DailyStats stats, int seed)
+    {
+        var deepSessions = sessions.Count(s => s.MessageCount >= 15);
+        var quickSessions = sessions.Count(s => s.MessageCount < 8);
 
-        // Topics worked on (from first prompts, deduplicated, top 3)
-        var topics = sessions
-            .Where(s => !string.IsNullOrWhiteSpace(s.FirstPrompt))
-            .Select(s => TruncateForSummary(s.FirstPrompt, 60))
-            .Distinct()
-            .Take(3)
+        if (stats.ProjectCount == 1 && sessions.Count == 1)
+        {
+            var templates = new[]
+            {
+                "This was a single focused session dedicated entirely to one project.",
+                "You spent the session fully concentrated on a single project."
+            };
+            return templates[seed % templates.Length];
+        }
+
+        if (stats.ProjectCount == 1 && deepSessions >= 2)
+            return $"You maintained deep focus on {stats.ProjectNames[0]} across multiple sessions.";
+
+        if (stats.ProjectCount >= 3)
+            return $"You context-switched between {stats.ProjectCount} different projects throughout the day.";
+
+        if (deepSessions > 0 && quickSessions > 0)
+            return $"Your sessions varied in depth \u2014 {deepSessions} deep {(deepSessions == 1 ? "session" : "sessions")} alongside {quickSessions} quick {(quickSessions == 1 ? "interaction" : "interactions")}.";
+
+        if (deepSessions >= 2)
+            return $"You had {deepSessions} in-depth sessions with extensive back-and-forth.";
+
+        if (quickSessions == sessions.Count)
+            return "Your interactions were brief and targeted throughout the day.";
+
+        return $"You worked across {stats.ProjectCount} {(stats.ProjectCount == 1 ? "project" : "projects")} in {sessions.Count} {(sessions.Count == 1 ? "session" : "sessions")}.";
+    }
+
+    private static string? BuildTimeInsight(List<SessionSummary> sessions)
+    {
+        var timestamps = sessions
+            .Where(s => s.Created.HasValue)
+            .Select(s => s.Created!.Value)
+            .OrderBy(t => t)
             .ToList();
 
-        if (topics.Count > 0)
-        {
-            sb.Append("Topics included: ");
-            sb.Append(string.Join("; ", topics.Select(t => $"\"{t}\"")));
-            if (sessions.Count > topics.Count)
-                sb.Append($" and {sessions.Count - topics.Count} more");
-            sb.Append('.');
-        }
+        if (timestamps.Count < 2) return null;
 
-        // Git branches
+        var earliest = timestamps.First();
+        var latest = sessions
+            .Where(s => s.Modified.HasValue || s.Created.HasValue)
+            .Max(s => s.Modified ?? s.Created!.Value);
+
+        var span = latest - earliest;
+
+        // Determine dominant time period
+        var morningCount = timestamps.Count(t => t.Hour < 12);
+        var afternoonCount = timestamps.Count(t => t.Hour >= 12 && t.Hour < 17);
+        var eveningCount = timestamps.Count(t => t.Hour >= 17);
+
+        string periodDesc;
+        if (morningCount > 0 && afternoonCount == 0 && eveningCount == 0)
+            periodDesc = $"concentrated in the morning ({earliest:HH:mm}\u2013{latest:HH:mm})";
+        else if (afternoonCount > 0 && morningCount == 0 && eveningCount == 0)
+            periodDesc = $"concentrated in the afternoon ({earliest:HH:mm}\u2013{latest:HH:mm})";
+        else if (eveningCount > 0 && morningCount == 0 && afternoonCount == 0)
+            periodDesc = $"concentrated in the evening ({earliest:HH:mm}\u2013{latest:HH:mm})";
+        else if (span.TotalHours >= 8)
+            periodDesc = $"spread across the day from {earliest:HH:mm} to {latest:HH:mm}";
+        else if (span.TotalHours >= 4)
+            periodDesc = $"spanning several hours ({earliest:HH:mm}\u2013{latest:HH:mm})";
+        else
+            periodDesc = $"within a {FormatSpan(span)} window ({earliest:HH:mm}\u2013{latest:HH:mm})";
+
+        return $"Activity was {periodDesc}.";
+    }
+
+    private static string? BuildClosingDetail(List<SessionSummary> sessions)
+    {
+        var topics = sessions
+            .Where(s => !string.IsNullOrWhiteSpace(s.FirstPrompt))
+            .Select(s => TruncateForSummary(s.FirstPrompt, 50))
+            .Distinct()
+            .ToList();
+
         var branches = sessions
             .Where(s => !string.IsNullOrEmpty(s.GitBranch))
             .Select(s => s.GitBranch!)
@@ -280,13 +459,55 @@ public class DailySummaryService
             .Take(3)
             .ToList();
 
-        if (branches.Count > 0)
+        var parts = new List<string>();
+
+        if (topics.Count == 1)
         {
-            sb.Append($" Branches: {string.Join(", ", branches)}.");
+            parts.Add($"The session focused on \"{topics[0]}\"");
+        }
+        else if (topics.Count <= 3)
+        {
+            parts.Add($"Topics ranged from \"{topics[0]}\" to \"{topics.Last()}\"");
+        }
+        else
+        {
+            parts.Add($"You tackled {topics.Count} different topics including \"{topics[0]}\" and \"{topics[1]}\"");
         }
 
-        return sb.ToString();
+        if (branches.Count > 0)
+        {
+            var branchText = branches.Count == 1
+                ? $"on branch {branches[0]}"
+                : $"across branches {string.Join(", ", branches)}";
+            parts.Add(branchText);
+        }
+
+        if (parts.Count == 0) return null;
+
+        return string.Join(", ", parts) + ".";
     }
+
+    private static string FormatSpan(TimeSpan span)
+    {
+        if (span.TotalHours >= 1)
+        {
+            var hours = (int)span.TotalHours;
+            return hours == 1 ? "1-hour" : $"{hours}-hour";
+        }
+        var mins = (int)span.TotalMinutes;
+        return $"{mins}-minute";
+    }
+
+    private record WorkCategories
+    {
+        public int Features { get; set; }
+        public int BugFixes { get; set; }
+        public int Refactoring { get; set; }
+        public int Chores { get; set; }
+        public int Other { get; set; }
+    }
+
+    #endregion
 
     private static string FormatCount(int count, string singular)
     {

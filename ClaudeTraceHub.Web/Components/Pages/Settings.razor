@@ -1,7 +1,9 @@
 @page "/settings"
 @rendermode InteractiveServer
 @inject IOptionsSnapshot<AzureDevOpsSettings> CurrentSettings
+@inject IOptionsSnapshot<ClaudeAiSettings> CurrentClaudeSettings
 @inject AzureDevOpsService AzureDevOpsService
+@inject AiSummaryService AiSummaryService
 @inject SettingsService SettingsService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
@@ -185,6 +187,100 @@
                 }
             </MudTabPanel>
 
+            <MudTabPanel Text="Claude AI" Icon="@Icons.Material.Filled.AutoAwesome">
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mb-4">
+                    Provide your Anthropic API key to enable AI-powered daily summaries on the Daily Summary page.
+                    This is optional &mdash; a local summary is always shown as fallback.
+                </MudText>
+
+                @* API Key *@
+                <MudTextField Value="_claudeApiKey"
+                              ValueChanged="OnClaudeApiKeyChanged"
+                              T="string"
+                              Label="Anthropic API Key"
+                              Placeholder="sk-ant-api03-..."
+                              Variant="Variant.Outlined"
+                              Immediate="true"
+                              InputType="@_claudeKeyInputType"
+                              Adornment="Adornment.End"
+                              AdornmentIcon="@_claudeKeyVisibilityIcon"
+                              OnAdornmentClick="ToggleClaudeKeyVisibility"
+                              Class="mb-4"
+                              Error="@(!string.IsNullOrEmpty(_claudeKeyError))"
+                              ErrorText="@_claudeKeyError"
+                              HelperText="Your Anthropic API key from console.anthropic.com" />
+
+                @* Model Selection *@
+                <MudSelect T="string" Value="_claudeModel" ValueChanged="OnClaudeModelChanged"
+                           Label="Model" Variant="Variant.Outlined" Class="mb-4"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.SmartToy"
+                           HelperText="Model used for generating AI summaries">
+                    <MudSelectItem T="string" Value="@("claude-haiku-4-5-20251001")">
+                        Claude Haiku 4.5 (Fast, low cost)
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("claude-sonnet-4-5-20250929")">
+                        Claude Sonnet 4.5 (Balanced)
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("claude-sonnet-4-20250514")">
+                        Claude Sonnet 4 (Previous gen)
+                    </MudSelectItem>
+                    <MudSelectItem T="string" Value="@("claude-3-haiku-20240307")">
+                        Claude 3 Haiku (Legacy, cheapest)
+                    </MudSelectItem>
+                </MudSelect>
+
+                @* Test API Key button *@
+                <div class="d-flex align-center gap-3 mb-4">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.NetworkCheck"
+                               OnClick="TestClaudeApiKey"
+                               Disabled="@(_claudeTesting || !_hasClaudeKey)">
+                        @if (_claudeTesting)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Testing...</span>
+                        }
+                        else
+                        {
+                            <span>Test API Key</span>
+                        }
+                    </MudButton>
+                    @if (_claudeTestSuccess)
+                    {
+                        <div class="d-flex align-center gap-1">
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            <MudText Typo="Typo.body2" Color="Color.Success">API key is valid</MudText>
+                        </div>
+                    }
+                </div>
+
+                @* Save button *@
+                <div class="mt-4">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Save"
+                               OnClick="SaveClaudeSettings"
+                               Disabled="@(_claudeSaving || !_hasClaudeKey)">
+                        @if (_claudeSaving)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-2" />
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save AI Settings</span>
+                        }
+                    </MudButton>
+                </div>
+
+                @if (_claudeSaveSuccess)
+                {
+                    <MudAlert Severity="Severity.Success" Class="mt-4" Variant="Variant.Outlined"
+                              Icon="@Icons.Material.Filled.CheckCircle">
+                        Claude AI settings saved!
+                    </MudAlert>
+                }
+            </MudTabPanel>
+
         </MudTabs>
     </MudPaper>
 </div>
@@ -214,6 +310,22 @@
         ? Icons.Material.Filled.VisibilityOff
         : Icons.Material.Filled.Visibility;
 
+    // Claude AI state
+    private string _claudeApiKey = "";
+    private string _claudeModel = "claude-haiku-4-5-20251001";
+    private bool _claudeKeyVisible;
+    private bool _claudeTesting;
+    private bool _claudeTestSuccess;
+    private bool _claudeSaving;
+    private bool _claudeSaveSuccess;
+    private string? _claudeKeyError;
+
+    private bool _hasClaudeKey => !string.IsNullOrWhiteSpace(_claudeApiKey);
+    private InputType _claudeKeyInputType => _claudeKeyVisible ? InputType.Text : InputType.Password;
+    private string _claudeKeyVisibilityIcon => _claudeKeyVisible
+        ? Icons.Material.Filled.VisibilityOff
+        : Icons.Material.Filled.Visibility;
+
     protected override void OnInitialized()
     {
         var settings = CurrentSettings.Value;
@@ -221,6 +333,11 @@
         _organizationUrl = settings.OrganizationUrl;
         _personalAccessToken = settings.PersonalAccessToken;
         _selectedProjects = new HashSet<string>(settings.Projects);
+
+        // Load Claude AI settings
+        var claudeSettings = CurrentClaudeSettings.Value;
+        _claudeApiKey = claudeSettings.ApiKey;
+        _claudeModel = claudeSettings.Model;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -393,5 +510,83 @@
     }
 
     private void TogglePatVisibility() => _patVisible = !_patVisible;
+
+    // Claude AI methods
+    private void OnClaudeApiKeyChanged(string value)
+    {
+        _claudeApiKey = value;
+        _claudeKeyError = null;
+        _claudeTestSuccess = false;
+        _claudeSaveSuccess = false;
+    }
+
+    private void OnClaudeModelChanged(string value)
+    {
+        _claudeModel = value;
+        _claudeTestSuccess = false;
+        _claudeSaveSuccess = false;
+    }
+
+    private async Task TestClaudeApiKey()
+    {
+        _claudeKeyError = null;
+        _claudeTesting = true;
+        _claudeTestSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var result = await AiSummaryService.TestApiKeyAsync(_claudeApiKey.Trim(), _claudeModel);
+            if (result.Success)
+            {
+                _claudeTestSuccess = true;
+                _ = DismissAfterDelay(() => _claudeTestSuccess = false);
+            }
+            else
+            {
+                _claudeKeyError = result.Message;
+            }
+        }
+        catch (Exception)
+        {
+            _claudeKeyError = "Unable to reach the Anthropic API. Check your network.";
+        }
+        finally
+        {
+            _claudeTesting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveClaudeSettings()
+    {
+        _claudeSaving = true;
+        _claudeSaveSuccess = false;
+        StateHasChanged();
+
+        try
+        {
+            var settings = new ClaudeAiSettings
+            {
+                ApiKey = _claudeApiKey.Trim(),
+                Model = _claudeModel
+            };
+
+            await SettingsService.SaveClaudeAiSettingsAsync(settings);
+            _claudeSaveSuccess = true;
+            _ = DismissAfterDelay(() => _claudeSaveSuccess = false);
+            Snackbar.Add("Claude AI settings saved!", Severity.Success);
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("Failed to save Claude AI settings.", Severity.Error);
+        }
+        finally
+        {
+            _claudeSaving = false;
+        }
+    }
+
+    private void ToggleClaudeKeyVisibility() => _claudeKeyVisible = !_claudeKeyVisible;
 
 }

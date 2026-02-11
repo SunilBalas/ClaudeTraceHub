@@ -36,6 +36,11 @@ builder.Services.Configure<AzureDevOpsSettings>(
     builder.Configuration.GetSection("AzureDevOps"));
 builder.Services.AddHttpClient<AzureDevOpsService>();
 
+// Claude AI integration (for AI-powered summaries)
+builder.Services.Configure<ClaudeAiSettings>(
+    builder.Configuration.GetSection("ClaudeAi"));
+builder.Services.AddHttpClient<AiSummaryService>();
+
 
 // Ensure WebRootPath resolves correctly regardless of working directory
 var contentRoot = builder.Environment.ContentRootPath;
@@ -57,5 +62,24 @@ app.UseAntiforgery();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+// Auto-open browser when app starts
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var urls = app.Urls;
+    var url = urls.FirstOrDefault() ?? "http://localhost:5204";
+    try
+    {
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = url,
+            UseShellExecute = true
+        });
+    }
+    catch
+    {
+        // Silently ignore if browser can't be opened
+    }
+});
 
 app.Run();
