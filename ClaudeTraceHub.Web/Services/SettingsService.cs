@@ -36,20 +36,6 @@ public class SettingsService
         _logger.LogInformation("Azure DevOps settings saved to {Path}", _settingsFilePath);
     }
 
-    public async Task SaveClaudeAiSettingsAsync(ClaudeAiSettings settings)
-    {
-        var root = await LoadRootAsync();
-
-        root["ClaudeAi"] = JsonSerializer.SerializeToElement(new
-        {
-            settings.ApiKey,
-            settings.Model
-        }, _jsonOptions);
-
-        await SaveRootAsync(root);
-        _logger.LogInformation("Claude AI settings saved to {Path}", _settingsFilePath);
-    }
-
     private async Task<Dictionary<string, JsonElement>> LoadRootAsync()
     {
         if (!File.Exists(_settingsFilePath))

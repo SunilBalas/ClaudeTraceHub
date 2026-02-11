@@ -3,7 +3,6 @@
 @rendermode InteractiveServer
 @implements IDisposable
 @inject DailySummaryService SummaryService
-@inject AiSummaryService AiSummaryService
 @inject NavigationManager NavigationManager
 @inject DataRefreshService RefreshService
 @inject ClaudeDataDiscoveryService DiscoveryService
@@ -122,44 +121,14 @@ else
         </MudGrid>
 
         @* Day Summary Paragraph *@
-        @if (!string.IsNullOrEmpty(_daySummary) || !string.IsNullOrEmpty(_aiSummary) || _aiSummaryLoading)
+        @if (!string.IsNullOrEmpty(_daySummary))
         {
             <MudPaper Elevation="1" Class="pa-4 mb-4 daily-summary-paragraph">
-                <div class="d-flex align-center justify-space-between mb-2">
-                    <div class="d-flex align-center gap-2">
-                        <MudIcon Icon="@Icons.Material.Filled.Summarize" Size="Size.Small" Color="Color.Primary" />
-                        <MudText Typo="Typo.subtitle2" Color="Color.Primary">Day at a Glance</MudText>
-                        @if (!string.IsNullOrEmpty(_aiSummary))
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Secondary"
-                                     Variant="Variant.Filled" Class="ai-badge">AI</MudChip>
-                        }
-                    </div>
-                    @if (AiSummaryService.IsConfigured && !_aiSummaryLoading)
-                    {
-                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                                       Color="Color.Primary" OnClick="RegenerateAiSummary" />
-                    }
+                <div class="d-flex align-center gap-2 mb-2">
+                    <MudIcon Icon="@Icons.Material.Filled.Summarize" Size="Size.Small" Color="Color.Primary" />
+                    <MudText Typo="Typo.subtitle2" Color="Color.Primary">Day at a Glance</MudText>
                 </div>
-                @if (_aiSummaryLoading)
-                {
-                    <div class="d-flex align-center gap-2">
-                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
-                        <MudText Typo="Typo.body2" Color="Color.Secondary">Generating AI summary...</MudText>
-                    </div>
-                    @if (!string.IsNullOrEmpty(_daySummary))
-                    {
-                        <MudText Typo="Typo.body2" Class="mt-2">@_daySummary</MudText>
-                    }
-                }
-                else if (!string.IsNullOrEmpty(_aiSummary))
-                {
-                    <MudText Typo="Typo.body2">@_aiSummary</MudText>
-                }
-                else
-                {
-                    <MudText Typo="Typo.body2">@_daySummary</MudText>
-                }
+                <MudText Typo="Typo.body2">@_daySummary</MudText>
             </MudPaper>
         }
 
@@ -511,8 +480,6 @@ else
 
     // Day summary paragraph
     private string _daySummary = "";
-    private string? _aiSummary;
-    private bool _aiSummaryLoading;
 
     // Activity chart
     private List<ChartSeries> _activitySeries = new();
@@ -596,47 +563,6 @@ else
         _tokenChartLoading = false;
         _fileActivityLoaded = false;
         _fileActivityLoading = false;
-        _aiSummary = null;
-
-        // Fire-and-forget AI summary generation
-        if (AiSummaryService.IsConfigured && _sessions.Count > 0)
-        {
-            _ = LoadAiSummaryAsync();
-        }
-    }
-
-    private async Task LoadAiSummaryAsync(bool forceRefresh = false)
-    {
-        _aiSummaryLoading = true;
-        StateHasChanged();
-
-        try
-        {
-            var date = _selectedDate ?? DateTime.Today;
-            var result = await AiSummaryService.GenerateAiDaySummaryAsync(
-                date, _sessions, _stats, forceRefresh);
-
-            if (!_disposed && result != null)
-            {
-                _aiSummary = result;
-            }
-        }
-        catch
-        {
-            // Silently fall back to local summary
-        }
-        finally
-        {
-            _aiSummaryLoading = false;
-            if (!_disposed)
-                StateHasChanged();
-        }
-    }
-
-    private async Task RegenerateAiSummary()
-    {
-        _aiSummary = null;
-        await LoadAiSummaryAsync(forceRefresh: true);
     }
 
     private async Task ReloadForDate()

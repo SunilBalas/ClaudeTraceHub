@@ -36,10 +36,6 @@ builder.Services.Configure<AzureDevOpsSettings>(
     builder.Configuration.GetSection("AzureDevOps"));
 builder.Services.AddHttpClient<AzureDevOpsService>();
 
-// Claude AI integration (for AI-powered summaries)
-builder.Services.Configure<ClaudeAiSettings>(
-    builder.Configuration.GetSection("ClaudeAi"));
-builder.Services.AddHttpClient<AiSummaryService>();
 
 // Ensure WebRootPath resolves correctly regardless of working directory
 var contentRoot = builder.Environment.ContentRootPath;
