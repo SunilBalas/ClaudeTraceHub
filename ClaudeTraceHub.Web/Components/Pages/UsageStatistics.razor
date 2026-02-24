@@ -1,0 +1,474 @@
+@page "/usage-stats"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject UsageStatisticsService UsageService
+@inject DataRefreshService RefreshService
+
+<PageTitle>Usage Statistics - Claude TraceHub</PageTitle>
+
+@if (_loading)
+{
+    <div class="loading-container">
+        <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+        <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Loading usage statistics...</MudText>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    @* Header with date range selector *@
+    <div class="d-flex align-center justify-space-between mb-4 flex-wrap gap-2">
+        <MudText Typo="Typo.h4">Usage Statistics</MudText>
+        <div class="d-flex align-center gap-2 flex-wrap">
+            <MudButtonGroup OverrideStyles="false" Variant="Variant.Outlined" Size="Size.Small">
+                <MudButton OnClick="@(() => SetRange(7))"
+                           Color="@(_rangeDays == 7 ? Color.Primary : Color.Default)">7d</MudButton>
+                <MudButton OnClick="@(() => SetRange(14))"
+                           Color="@(_rangeDays == 14 ? Color.Primary : Color.Default)">14d</MudButton>
+                <MudButton OnClick="@(() => SetRange(30))"
+                           Color="@(_rangeDays == 30 ? Color.Primary : Color.Default)">30d</MudButton>
+                <MudButton OnClick="@(() => SetRange(90))"
+                           Color="@(_rangeDays == 90 ? Color.Primary : Color.Default)">90d</MudButton>
+            </MudButtonGroup>
+            <MudDateRangePicker @bind-DateRange="_dateRange" @bind-DateRange:after="OnDateRangeChanged"
+                                Variant="Variant.Outlined" Margin="Margin.Dense"
+                                Style="max-width: 280px;" />
+        </div>
+    </div>
+
+    @* Summary Cards *@
+    <MudGrid>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-primary">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Token" Color="Color.Primary" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@FormatNumber(_bundle.Summary.TotalTokens)</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Total Tokens</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-info">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Chat" Color="Color.Info" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@_bundle.Summary.TotalConversations</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Conversations</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-warning">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Message" Color="Color.Warning" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@FormatNumber(_bundle.Summary.TotalMessages)</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Messages</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudCard Elevation="2" Class="stats-card stats-success">
+                <MudCardContent Class="text-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Speed" Color="Color.Success" Size="Size.Large" />
+                    <div class="stats-card-value mt-2">@FormatNumber((long)_bundle.Summary.AvgTokensPerConversation)</div>
+                    <MudText Typo="Typo.body2" Color="Color.Secondary">Avg Tokens/Conv</MudText>
+                </MudCardContent>
+            </MudCard>
+        </MudItem>
+    </MudGrid>
+
+    @* Row 1: Daily Token Trend + Model Distribution *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="8">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Daily Token Usage</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                        @(_rangeDays > 0 ? $"Last {_rangeDays} days" : "Custom range")
+                    </MudChip>
+                </div>
+                @if (_dailySeries.Count > 0)
+                {
+                    <MudChart ChartType="ChartType.Line" ChartSeries="@_dailySeries"
+                              XAxisLabels="@_dailyLabels" Width="100%" Height="300px"
+                              ChartOptions="@_lineChartOptions" />
+                    <div class="chart-summary">
+                        <div class="chart-summary-item">
+                            <span class="chart-summary-value">@FormatNumber(_bundle.DailyUsage.Sum(d => d.TotalTokens))</span>
+                            <span class="chart-summary-label">Total</span>
+                        </div>
+                        <div class="chart-summary-item">
+                            <span class="chart-summary-value">@FormatNumber((long)(_bundle.DailyUsage.Count > 0 ? _bundle.DailyUsage.Average(d => d.TotalTokens) : 0))</span>
+                            <span class="chart-summary-label">Daily Avg</span>
+                        </div>
+                        <div class="chart-summary-item">
+                            <span class="chart-summary-value">@FormatNumber(_bundle.DailyUsage.Max(d => d.TotalTokens))</span>
+                            <span class="chart-summary-label">Peak Day</span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex align-center justify-center" style="height: 300px;">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No data for selected period</MudText>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Model Distribution</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">By tokens</MudChip>
+                </div>
+                @if (_modelDonutLabels.Length > 0)
+                {
+                    <MudChart ChartType="ChartType.Donut" InputData="@_modelDonutData"
+                              InputLabels="@_modelDonutLabels" Width="100%" Height="200px" />
+                    <div class="chart-legend">
+                        @for (int i = 0; i < _modelDonutLabels.Length; i++)
+                        {
+                            var idx = i;
+                            var pct = _modelDonutTotal > 0 ? (_modelDonutData[idx] / _modelDonutTotal * 100) : 0;
+                            <div class="chart-legend-item">
+                                <span class="chart-legend-dot" style="background-color: @_chartColors[idx % _chartColors.Length]"></span>
+                                <span class="chart-legend-name">@_modelDonutLabels[idx]</span>
+                                <span class="chart-legend-value">@FormatNumber((long)_modelDonutData[idx]) <span class="chart-legend-pct">(@pct.ToString("0.#")%)</span></span>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex align-center justify-center" style="height: 200px;">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No model data available</MudText>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Row 2: Branch Stats + Project Stats *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Usage by Branch</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Top @Math.Min(15, _bundle.BranchStats.Count)</MudChip>
+                </div>
+                @if (_bundle.BranchStats.Count > 0)
+                {
+                    <MudTable Items="@_bundle.BranchStats.Take(15)" Dense="true" Hover="true"
+                              Breakpoint="Breakpoint.Sm" T="BranchUsageStats" Class="usage-branch-table">
+                        <HeaderContent>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.BranchName)">Branch</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.ConversationCount)">Convs</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.MessageCount)">Msgs</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.InputTokens)">Input</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.OutputTokens)">Output</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<BranchUsageStats, object>(x => x.TotalTokens)" InitialDirection="SortDirection.Descending">Total</MudTableSortLabel></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Branch" title="@context.BranchName">@Truncate(context.BranchName, 25)</MudTd>
+                            <MudTd DataLabel="Convs">@context.ConversationCount</MudTd>
+                            <MudTd DataLabel="Msgs">@context.MessageCount</MudTd>
+                            <MudTd DataLabel="Input"><span class="usage-token-value">@FormatNumber(context.InputTokens)</span></MudTd>
+                            <MudTd DataLabel="Output"><span class="usage-token-value">@FormatNumber(context.OutputTokens)</span></MudTd>
+                            <MudTd DataLabel="Total"><strong class="usage-token-value">@FormatNumber(context.TotalTokens)</strong></MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No branch data available</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Top Projects by Tokens</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Top @Math.Min(10, _bundle.ProjectStats.Count)</MudChip>
+                </div>
+                @if (_bundle.ProjectStats.Count > 0)
+                {
+                    <div class="project-bars">
+                        @{ var topProjects = _bundle.ProjectStats.Take(10).ToList(); }
+                        @for (int i = 0; i < topProjects.Count; i++)
+                        {
+                            var idx = i;
+                            var maxVal = topProjects[0].TotalTokens;
+                            var widthPct = maxVal > 0 ? ((double)topProjects[idx].TotalTokens / maxVal * 100) : 0;
+                            <div class="project-bar-row">
+                                <div class="project-bar-label" title="@topProjects[idx].ProjectName">@Truncate(topProjects[idx].ProjectName, 18)</div>
+                                <div class="project-bar-track">
+                                    <div class="project-bar-fill" style="width: @widthPct.ToString("0")%"></div>
+                                </div>
+                                <div class="project-bar-value">@FormatNumber(topProjects[idx].TotalTokens)</div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No project data yet</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Row 3: Model Detail Table + Hourly Activity *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Model Breakdown</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">All models</MudChip>
+                </div>
+                @if (_bundle.ModelStats.Count > 0)
+                {
+                    <MudTable Items="@_bundle.ModelStats" Dense="true" Hover="true"
+                              Breakpoint="Breakpoint.Sm" T="ModelUsageStats">
+                        <HeaderContent>
+                            <MudTh>Model</MudTh>
+                            <MudTh>Convs</MudTh>
+                            <MudTh>Msgs</MudTh>
+                            <MudTh>Input</MudTh>
+                            <MudTh>Output</MudTh>
+                            <MudTh>Total</MudTh>
+                            <MudTh Style="min-width: 100px;">Share</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Model"><strong>@context.ModelName</strong></MudTd>
+                            <MudTd DataLabel="Convs">@context.ConversationCount</MudTd>
+                            <MudTd DataLabel="Msgs">@context.MessageCount</MudTd>
+                            <MudTd DataLabel="Input"><span class="usage-token-value">@FormatNumber(context.InputTokens)</span></MudTd>
+                            <MudTd DataLabel="Output"><span class="usage-token-value">@FormatNumber(context.OutputTokens)</span></MudTd>
+                            <MudTd DataLabel="Total"><strong class="usage-token-value">@FormatNumber(context.TotalTokens)</strong></MudTd>
+                            <MudTd DataLabel="Share">
+                                <div class="d-flex align-center gap-2">
+                                    <div class="usage-model-pct-track" style="flex: 1;">
+                                        <div class="usage-model-pct-bar" style="width: @context.Percentage.ToString("0")%"></div>
+                                    </div>
+                                    <MudText Typo="Typo.caption">@context.Percentage.ToString("0.#")%</MudText>
+                                </div>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No model data available</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Hourly Activity</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Tokens by hour</MudChip>
+                </div>
+                @if (_hourlySeries.Count > 0)
+                {
+                    <MudChart ChartType="ChartType.Bar" ChartSeries="@_hourlySeries"
+                              XAxisLabels="@_hourLabels" Width="100%" Height="250px"
+                              ChartOptions="@_barChartOptions" />
+                }
+                else
+                {
+                    <div class="d-flex align-center justify-center" style="height: 250px;">
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">No hourly data available</MudText>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    @* Row 4: Tool Usage Breakdown *@
+    <MudGrid Class="mt-4">
+        <MudItem xs="12">
+            <MudPaper Elevation="2" Class="pa-4 chart-panel">
+                <div class="chart-header">
+                    <MudText Typo="Typo.h6">Tool Usage</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">Top @_bundle.ToolUsage.Count tools</MudChip>
+                </div>
+                @if (_bundle.ToolUsage.Count > 0)
+                {
+                    <MudTable Items="@_bundle.ToolUsage" Dense="true" Hover="true"
+                              Breakpoint="Breakpoint.Sm" T="ToolUsageBreakdown" Class="usage-tool-table">
+                        <HeaderContent>
+                            <MudTh><MudTableSortLabel SortBy="new Func<ToolUsageBreakdown, object>(x => x.ToolName)">Tool</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<ToolUsageBreakdown, object>(x => x.InvocationCount)" InitialDirection="SortDirection.Descending">Invocations</MudTableSortLabel></MudTh>
+                            <MudTh><MudTableSortLabel SortBy="new Func<ToolUsageBreakdown, object>(x => x.ConversationCount)">Sessions Used</MudTableSortLabel></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Tool">@context.ToolName</MudTd>
+                            <MudTd DataLabel="Invocations"><strong>@context.InvocationCount.ToString("N0")</strong></MudTd>
+                            <MudTd DataLabel="Sessions">@context.ConversationCount</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Secondary" Class="pa-4">No tool usage data available</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _disposed;
+
+    // Date range
+    private int _rangeDays = 30;
+    private DateRange _dateRange = new(DateTime.Today.AddDays(-30), DateTime.Today);
+
+    // Data
+    private UsageDataBundle _bundle = new();
+
+    // Chart data
+    private List<ChartSeries> _dailySeries = new();
+    private string[] _dailyLabels = Array.Empty<string>();
+    private double[] _modelDonutData = Array.Empty<double>();
+    private string[] _modelDonutLabels = Array.Empty<string>();
+    private double _modelDonutTotal;
+    private List<ChartSeries> _hourlySeries = new();
+    private readonly string[] _hourLabels = Enumerable.Range(0, 24)
+        .Select(h => h % 3 == 0 ? $"{h:D2}:00" : "").ToArray();
+
+    // Chart options
+    private readonly ChartOptions _lineChartOptions = new()
+    {
+        YAxisTicks = 5,
+        LineStrokeWidth = 2.5,
+        MaxNumYAxisTicks = 8
+    };
+
+    private readonly ChartOptions _barChartOptions = new()
+    {
+        YAxisTicks = 5,
+        MaxNumYAxisTicks = 8
+    };
+
+    private readonly string[] _chartColors = { "#594AE2", "#FF4081", "#00BCD4", "#FF9800", "#4CAF50", "#9C27B0", "#795548" };
+
+    protected override async Task OnInitializedAsync()
+    {
+        RefreshService.OnDataChanged += OnDataRefresh;
+        await LoadDataAsync();
+        _loading = false;
+    }
+
+    private async Task LoadDataAsync()
+    {
+        await Task.Run(() =>
+        {
+            _bundle = UsageService.GetUsageData(
+                _dateRange.Start ?? DateTime.Today.AddDays(-30),
+                _dateRange.End ?? DateTime.Today);
+        });
+        BuildChartData();
+    }
+
+    private void BuildChartData()
+    {
+        // Daily line chart (multi-series by model)
+        var models = _bundle.DailyModelUsage
+            .Select(d => d.ModelName).Distinct().OrderBy(m => m).ToList();
+
+        _dailyLabels = _bundle.DailyUsage.Select((d, i) =>
+            i % 5 == 0 || i == _bundle.DailyUsage.Count - 1
+                ? d.Date.ToString("MMM dd") : ""
+        ).ToArray();
+
+        if (models.Count > 0)
+        {
+            _dailySeries = models.Select(model => new ChartSeries
+            {
+                Name = model,
+                Data = _bundle.DailyUsage.Select(day =>
+                    (double)(_bundle.DailyModelUsage
+                        .FirstOrDefault(dm => dm.Date == day.Date && dm.ModelName == model)
+                        ?.TotalTokens ?? 0)
+                ).ToArray()
+            }).ToList();
+        }
+        else
+        {
+            _dailySeries = new List<ChartSeries>
+            {
+                new() { Name = "Tokens", Data = _bundle.DailyUsage.Select(d => (double)d.TotalTokens).ToArray() }
+            };
+        }
+
+        // Model donut
+        _modelDonutLabels = _bundle.ModelStats.Select(m => m.ModelName).ToArray();
+        _modelDonutData = _bundle.ModelStats.Select(m => (double)m.TotalTokens).ToArray();
+        _modelDonutTotal = _modelDonutData.Length > 0 ? _modelDonutData.Sum() : 0;
+
+        // Hourly bar chart
+        _hourlySeries = new List<ChartSeries>
+        {
+            new() { Name = "Tokens", Data = _bundle.HourlyUsage.Select(h => (double)h.TotalTokens).ToArray() }
+        };
+    }
+
+    private async Task SetRange(int days)
+    {
+        _rangeDays = days;
+        _dateRange = new DateRange(DateTime.Today.AddDays(-days), DateTime.Today);
+        _loading = true;
+        StateHasChanged();
+        await LoadDataAsync();
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task OnDateRangeChanged()
+    {
+        _rangeDays = 0;
+        _loading = true;
+        StateHasChanged();
+        await LoadDataAsync();
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async void OnDataRefresh()
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(async () =>
+            {
+                if (_disposed) return;
+                await LoadDataAsync();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private static string FormatNumber(long num)
+    {
+        return num >= 1_000_000 ? $"{num / 1_000_000.0:F1}M"
+             : num >= 1_000 ? $"{num / 1_000.0:F1}K"
+             : num.ToString();
+    }
+
+    private static string Truncate(string? text, int max)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        return text.Length <= max ? text : text[..max] + "...";
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        RefreshService.OnDataChanged -= OnDataRefresh;
+    }
+}
