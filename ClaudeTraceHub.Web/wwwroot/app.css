@@ -1646,3 +1646,51 @@ html, body {
     border: 2px dashed var(--mud-palette-lines-default);
     border-radius: 12px;
 }
+
+/* ============================================================
+   17. USAGE STATISTICS
+   ============================================================ */
+
+/* Branch table - monospace branch names */
+.usage-branch-table .mud-table-cell:first-child {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Token value emphasis */
+.usage-token-value {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.light-theme .usage-token-value { color: var(--mud-palette-primary); }
+.dark-theme .usage-token-value { color: var(--mud-palette-primary-lighten); }
+
+/* Model percentage bar */
+.usage-model-pct-track {
+    height: 6px;
+    border-radius: 3px;
+    width: 100%;
+}
+
+.light-theme .usage-model-pct-track { background-color: #f0f0f0; }
+.dark-theme .usage-model-pct-track { background-color: #2d2d3f; }
+
+.usage-model-pct-bar {
+    height: 6px;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+.light-theme .usage-model-pct-bar { background-color: var(--mud-palette-primary); }
+.dark-theme .usage-model-pct-bar { background-color: var(--mud-palette-primary-lighten); }
+
+/* Tool usage table - monospace tool names */
+.usage-tool-table .mud-table-cell:first-child {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 12px;
+}

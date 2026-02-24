@@ -19,6 +19,7 @@ builder.Services.AddSingleton<JsonlParserService>();
 builder.Services.AddSingleton<ConversationCacheService>();
 builder.Services.AddScoped<DashboardService>();
 builder.Services.AddScoped<DailySummaryService>();
+builder.Services.AddScoped<UsageStatisticsService>();
 builder.Services.AddScoped<ExcelExportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<TfsWorkItemFilterService>();
