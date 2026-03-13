@@ -420,6 +420,83 @@ public class AzureDevOpsService
         }
     }
 
+    /// <summary>
+    /// Lists teams in a project.
+    /// </summary>
+    public async Task<List<string>> GetTeamsAsync(string project)
+    {
+        if (!IsConfigured) return new();
+
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            var url = $"_apis/projects/{encodedProject}/teams?api-version={ApiVersion}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return new();
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+            var teams = new List<string>();
+
+            if (doc.RootElement.TryGetProperty("value", out var arr))
+            {
+                foreach (var t in arr.EnumerateArray())
+                {
+                    if (t.TryGetProperty("name", out var name))
+                    {
+                        var n = name.GetString();
+                        if (!string.IsNullOrEmpty(n))
+                            teams.Add(n);
+                    }
+                }
+            }
+
+            return teams.OrderBy(t => t).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching teams for project {Project}", project);
+            return new();
+        }
+    }
+
+    /// <summary>
+    /// Gets the current iteration name for a project/team.
+    /// Returns the iteration path (e.g., "ProjectName\PI2026Q1\Sprint 1").
+    /// </summary>
+    public async Task<string?> GetCurrentIterationAsync(string project, string team)
+    {
+        if (!IsConfigured) return null;
+
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            var encodedTeam = Uri.EscapeDataString(team);
+            var url = $"{encodedProject}/{encodedTeam}/_apis/work/teamsettings/iterations?$timeframe=current&api-version={ApiVersion}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("value", out var arr))
+            {
+                foreach (var iter in arr.EnumerateArray())
+                {
+                    if (iter.TryGetProperty("path", out var pathProp))
+                        return pathProp.GetString();
+                }
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching current iteration for {Project}/{Team}", project, team);
+            return null;
+        }
+    }
+
     private static string TruncateForNote(string text, int max = 120)
     {
         if (string.IsNullOrEmpty(text)) return "";

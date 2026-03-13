@@ -1,0 +1,496 @@
+@page "/ai-adoption"
+@rendermode InteractiveServer
+@inject AiAdoptionService AdoptionService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+@using ClosedXML.Excel
+
+<PageTitle>AI Adoption Data - Claude TraceHub</PageTitle>
+
+@if (!AdoptionService.IsConfigured)
+{
+    <div class="page-content">
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Azure DevOps is not configured. Go to <MudLink Href="/settings" Color="Color.Inherit"><b>Settings</b></MudLink> to set up your connection.
+        </MudAlert>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    @* Header *@
+    <div class="d-flex align-center justify-space-between mb-4 flex-wrap gap-2">
+        <MudText Typo="Typo.h4">AI Adoption Data</MudText>
+        <div class="d-flex align-center gap-2">
+            @if (!_loading && _bundle.MemberStats.Count > 0)
+            {
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@Icons.Material.Filled.FileDownload"
+                           OnClick="ExportToExcel">Export Excel</MudButton>
+            }
+            <MudButton Variant="Variant.Outlined" Color="Color.Default" Size="Size.Small"
+                       StartIcon="@(_showFilters ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                       OnClick="@(() => _showFilters = !_showFilters)">
+                @(_showFilters ? "Hide" : "Show") Filters
+            </MudButton>
+        </div>
+    </div>
+
+    @* Filter Criteria Chips *@
+    <div class="d-flex flex-wrap gap-2 mb-3">
+        @if (!string.IsNullOrEmpty(_selectedDiscipline))
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">
+                Discipline = @_selectedDiscipline
+            </MudChip>
+        }
+        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">Task</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Resolved/Closed</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">Reason &ne; Rejected</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Secondary" Variant="Variant.Filled">Org Est &gt; 0</MudChip>
+        @if (!string.IsNullOrEmpty(_selectedAreaPath))
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Dark" Variant="Variant.Filled">
+                Area = @TruncateIteration(_selectedAreaPath)
+            </MudChip>
+        }
+        @foreach (var iter in _selectedIterations)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Tertiary" Variant="Variant.Filled">
+                @TruncateIteration(iter)
+            </MudChip>
+        }
+    </div>
+
+    @* Filters Panel *@
+    @if (_showFilters)
+    {
+        <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+            <MudGrid>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                               Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                        @foreach (var p in AzureSettings.Value.Projects)
+                        {
+                            <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudAutocomplete T="string" Value="_selectedAreaPath" ValueChanged="OnAreaPathChanged"
+                                     SearchFunc="SearchAreaPaths"
+                                     Label="Area Path" Variant="Variant.Outlined" Margin="Margin.Dense"
+                                     Clearable="true" Dense="true" MaxItems="50"
+                                     Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AccountTree" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="string" MultiSelection="true" SelectedValues="_selectedIterations"
+                               SelectedValuesChanged="OnIterationsChanged"
+                               Label="Iteration Path" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true" Dense="true"
+                               MultiSelectionTextFunc="@(vals => $"{vals.Count()} sprint(s) selected")"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay">
+                        @foreach (var iter in _iterations)
+                        {
+                            <MudSelectItem T="string" Value="@iter">@TruncateIteration(iter)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect T="string" Value="_selectedDiscipline" ValueChanged="OnDisciplineChanged"
+                               Label="Discipline" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Engineering">
+                        @foreach (var d in _disciplines)
+                        {
+                            <MudSelectItem T="string" Value="@d">@d</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                               OnClick="LoadData" Disabled="_loading" Size="Size.Medium">
+                        @if (_loading)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        }
+                        Go
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+        </MudPaper>
+    }
+
+    @* Loading *@
+    @if (_loading)
+    {
+        <div class="loading-container">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-4">Querying Azure DevOps...</MudText>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(_bundle.ErrorMessage) && _bundle.MemberStats.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mt-4">
+            @_bundle.ErrorMessage
+        </MudAlert>
+    }
+    else if (_bundle.MemberStats.Count > 0)
+    {
+        @* Summary Cards *@
+        <MudGrid Class="mb-4">
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card stats-primary">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value">@_bundle.Summary.DevMembers</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Dev Members</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card stats-info">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value">@_bundle.Summary.TotalTasks</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Tasks</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card stats-success">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value adoption-value-green">@_bundle.Summary.TotalOriginalEstimate.ToString("F2")h</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Orig Est</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card stats-warning">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value adoption-value-cyan">@_bundle.Summary.TotalCompletedWork.ToString("F2")h</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Total Completed</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card" Style="border-left-color: #E91E63;">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value">@_bundle.Summary.ManualEfficiencyPercent%</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Manual Eff.</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudCard Elevation="2" Class="stats-card" Style="border-left-color: #00E676;">
+                    <MudCardContent Class="text-center">
+                        <div class="stats-card-value adoption-value-green">@_bundle.Summary.AiEfficiencyPercent%</div>
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">AI Eff.</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        </MudGrid>
+
+        @* Member Breakdown Table *@
+        <MudPaper Elevation="2" Class="pa-4 chart-panel">
+            <div class="chart-header">
+                <MudText Typo="Typo.h6">Development Team - Task Execution Type Breakdown</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                    @_bundle.MemberStats.Count members
+                </MudChip>
+            </div>
+
+            <MudTable Items="@_bundle.MemberStats" Dense="true" Hover="true"
+                      Breakpoint="Breakpoint.None" T="MemberAdoptionStats"
+                      Class="adoption-table">
+                <HeaderContent>
+                    <MudTh>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.MemberName)">Member</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.Discipline)">Discipline</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="border-left: 2px solid rgba(255,255,255,0.12);">
+                        <div class="th-group">TASK COUNT</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.TotalTasks)">Total</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="color: #4CAF50;">
+                        <div class="th-group" style="color:#4CAF50;">TASK COUNT</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.ClaudeAiTasks)">AI</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <div class="th-group">TASK COUNT</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.ManualTasks)">Manual</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="color: #4CAF50; border-left: 2px solid rgba(255,255,255,0.12);">
+                        <div class="th-group" style="color:#4CAF50;">AI HOURS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.AiOriginalEstimate)">Orig Est</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="color: #4CAF50;">
+                        <div class="th-group" style="color:#4CAF50;">AI HOURS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.AiCompletedWork)">Completed</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="border-left: 2px solid rgba(255,255,255,0.12);">
+                        <div class="th-group">MANUAL HOURS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.ManualOriginalEstimate)">Orig Est</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <div class="th-group">MANUAL HOURS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.ManualCompletedWork)">Completed</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh Style="border-left: 2px solid rgba(255,255,255,0.12);">
+                        <div class="th-group">METRICS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.AiAdoptionPercent)">AI Adoption</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <div class="th-group">METRICS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.ManualEfficiencyPercent)">Man Eff</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <div class="th-group">METRICS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.AiEfficiencyPercent)">AI Eff</MudTableSortLabel>
+                    </MudTh>
+                    <MudTh>
+                        <div class="th-group">METRICS</div>
+                        <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.HoursSaved)" InitialDirection="SortDirection.Descending">Hrs Saved</MudTableSortLabel>
+                    </MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Member"><strong>@context.MemberName</strong></MudTd>
+                    <MudTd DataLabel="Discipline">@context.Discipline</MudTd>
+                    <MudTd DataLabel="Tasks">@context.TotalTasks</MudTd>
+                    <MudTd DataLabel="Claude AI" Style="color: #4CAF50; font-weight: 600;">@context.ClaudeAiTasks</MudTd>
+                    <MudTd DataLabel="Manual">@context.ManualTasks</MudTd>
+                    <MudTd DataLabel="AI Orig">@FormatHours(context.AiOriginalEstimate)</MudTd>
+                    <MudTd DataLabel="AI Comp">@FormatHours(context.AiCompletedWork)</MudTd>
+                    <MudTd DataLabel="Man Orig">@FormatHours(context.ManualOriginalEstimate)</MudTd>
+                    <MudTd DataLabel="Man Comp">@FormatHours(context.ManualCompletedWork)</MudTd>
+                    <MudTd DataLabel="AI Adoption">
+                        <div class="d-flex align-center gap-2">
+                            <MudProgressLinear Value="@context.AiAdoptionPercent" Color="Color.Info"
+                                               Style="min-width: 60px;" Size="Size.Small" Rounded="true" />
+                            <span class="adoption-pct">@context.AiAdoptionPercent%</span>
+                        </div>
+                    </MudTd>
+                    <MudTd DataLabel="Manual Eff.">
+                        <span class="@GetEfficiencyClass(context.ManualEfficiencyPercent)">@context.ManualEfficiencyPercent%</span>
+                    </MudTd>
+                    <MudTd DataLabel="AI Eff.">
+                        <span class="@GetEfficiencyClass(context.AiEfficiencyPercent)">@context.AiEfficiencyPercent%</span>
+                    </MudTd>
+                    <MudTd DataLabel="Hour Saved">
+                        <span class="adoption-hours-saved">@context.HoursSaved.ToString("F2")h</span>
+                    </MudTd>
+                </RowTemplate>
+                <FooterContent>
+                    <MudTd colspan="2"><strong>Totals:</strong></MudTd>
+                    <MudTd><strong>@_bundle.MemberStats.Sum(m => m.TotalTasks)</strong></MudTd>
+                    <MudTd Style="color: #4CAF50;"><strong>@_bundle.MemberStats.Sum(m => m.ClaudeAiTasks)</strong></MudTd>
+                    <MudTd><strong>@_bundle.MemberStats.Sum(m => m.ManualTasks)</strong></MudTd>
+                    <MudTd><strong>@FormatHours(_bundle.MemberStats.Sum(m => m.AiOriginalEstimate))</strong></MudTd>
+                    <MudTd><strong>@FormatHours(_bundle.MemberStats.Sum(m => m.AiCompletedWork))</strong></MudTd>
+                    <MudTd><strong>@FormatHours(_bundle.MemberStats.Sum(m => m.ManualOriginalEstimate))</strong></MudTd>
+                    <MudTd><strong>@FormatHours(_bundle.MemberStats.Sum(m => m.ManualCompletedWork))</strong></MudTd>
+                    <MudTd></MudTd>
+                    <MudTd></MudTd>
+                    <MudTd></MudTd>
+                    <MudTd><strong class="adoption-hours-saved">@_bundle.MemberStats.Sum(m => m.HoursSaved).ToString("F2")h</strong></MudTd>
+                </FooterContent>
+            </MudTable>
+        </MudPaper>
+    }
+
+    </div>
+}
+
+@code {
+    private bool _loading;
+    private bool _showFilters = true;
+    private AdoptionDataBundle _bundle = new();
+
+    // Filters
+    private string _selectedProject = "";
+    private string _selectedAreaPath = "";
+    private IEnumerable<string> _selectedIterations = new HashSet<string>();
+    private string _selectedDiscipline = "";
+    private List<string> _areaPaths = new();
+    private List<string> _iterations = new();
+    private List<string> _disciplines = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var projects = AzureSettings.Value.Projects;
+        if (projects.Count > 0)
+        {
+            _selectedProject = projects.First();
+            // Load area paths and iterations for the first project
+            _areaPaths = await AdoptionService.GetAreaPathsAsync(_selectedProject);
+            _iterations = await AdoptionService.GetIterationPathsAsync(_selectedProject);
+            // Auto-load data
+            await LoadData();
+        }
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedAreaPath = "";
+        _selectedIterations = new HashSet<string>();
+        _selectedDiscipline = "";
+        _areaPaths = await AdoptionService.GetAreaPathsAsync(project);
+        _iterations = await AdoptionService.GetIterationPathsAsync(project);
+        StateHasChanged();
+    }
+
+    private void OnAreaPathChanged(string? areaPath)
+    {
+        _selectedAreaPath = areaPath ?? "";
+    }
+
+    private void OnIterationsChanged(IEnumerable<string> iterations)
+    {
+        _selectedIterations = iterations;
+    }
+
+    private void OnDisciplineChanged(string? discipline)
+    {
+        _selectedDiscipline = discipline ?? "";
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+
+        _loading = true;
+        StateHasChanged();
+
+        try
+        {
+            _bundle = await AdoptionService.GetAdoptionDataAsync(
+                _selectedProject,
+                _selectedIterations.Any() ? _selectedIterations.ToList() : null,
+                string.IsNullOrEmpty(_selectedDiscipline) ? null : _selectedDiscipline,
+                string.IsNullOrEmpty(_selectedAreaPath) ? null : _selectedAreaPath);
+
+            // Update discipline filter options from results
+            if (_bundle.AvailableDisciplines.Count > 0)
+                _disciplines = _bundle.AvailableDisciplines;
+        }
+        catch (Exception ex)
+        {
+            _bundle = new AdoptionDataBundle { ErrorMessage = $"Error loading data: {ex.Message}" };
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            using var workbook = new XLWorkbook();
+            var ws = workbook.Worksheets.Add("AI Adoption");
+
+            // Headers
+            var headers = new[] { "Member", "Discipline", "Tasks", "Claude AI", "Manual",
+                "AI Orig Est", "AI Completed", "Manual Orig Est", "Manual Completed",
+                "AI Adoption %", "Manual Eff. %", "AI Eff. %", "Hours Saved" };
+
+            for (int i = 0; i < headers.Length; i++)
+                ws.Cell(1, i + 1).Value = headers[i];
+
+            // Style header row
+            var headerRange = ws.Range(1, 1, 1, headers.Length);
+            headerRange.Style.Font.Bold = true;
+            headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#1a1a2e");
+            headerRange.Style.Font.FontColor = XLColor.White;
+
+            // Data rows
+            for (int r = 0; r < _bundle.MemberStats.Count; r++)
+            {
+                var m = _bundle.MemberStats[r];
+                var row = r + 2;
+                ws.Cell(row, 1).Value = m.MemberName;
+                ws.Cell(row, 2).Value = m.Discipline;
+                ws.Cell(row, 3).Value = m.TotalTasks;
+                ws.Cell(row, 4).Value = m.ClaudeAiTasks;
+                ws.Cell(row, 5).Value = m.ManualTasks;
+                ws.Cell(row, 6).Value = m.AiOriginalEstimate;
+                ws.Cell(row, 7).Value = m.AiCompletedWork;
+                ws.Cell(row, 8).Value = m.ManualOriginalEstimate;
+                ws.Cell(row, 9).Value = m.ManualCompletedWork;
+                ws.Cell(row, 10).Value = m.AiAdoptionPercent;
+                ws.Cell(row, 11).Value = m.ManualEfficiencyPercent;
+                ws.Cell(row, 12).Value = m.AiEfficiencyPercent;
+                ws.Cell(row, 13).Value = m.HoursSaved;
+            }
+
+            // Totals row
+            var totalRow = _bundle.MemberStats.Count + 2;
+            ws.Cell(totalRow, 1).Value = "TOTALS";
+            ws.Cell(totalRow, 1).Style.Font.Bold = true;
+            ws.Cell(totalRow, 3).Value = _bundle.MemberStats.Sum(m => m.TotalTasks);
+            ws.Cell(totalRow, 4).Value = _bundle.MemberStats.Sum(m => m.ClaudeAiTasks);
+            ws.Cell(totalRow, 5).Value = _bundle.MemberStats.Sum(m => m.ManualTasks);
+            ws.Cell(totalRow, 6).Value = _bundle.MemberStats.Sum(m => m.AiOriginalEstimate);
+            ws.Cell(totalRow, 7).Value = _bundle.MemberStats.Sum(m => m.AiCompletedWork);
+            ws.Cell(totalRow, 8).Value = _bundle.MemberStats.Sum(m => m.ManualOriginalEstimate);
+            ws.Cell(totalRow, 9).Value = _bundle.MemberStats.Sum(m => m.ManualCompletedWork);
+            ws.Cell(totalRow, 13).Value = _bundle.MemberStats.Sum(m => m.HoursSaved);
+            ws.Range(totalRow, 1, totalRow, headers.Length).Style.Font.Bold = true;
+
+            ws.Columns().AdjustToContents();
+
+            // Save to memory and trigger browser download via JS interop
+            using var ms = new MemoryStream();
+            workbook.SaveAs(ms);
+            var bytes = ms.ToArray();
+
+            var fileName = $"AI_Adoption_{_selectedProject}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            await JS.InvokeVoidAsync("downloadFile", fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+
+            Snackbar.Add("Excel exported successfully!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static string FormatHours(double hours)
+    {
+        return hours > 0 ? $"{hours:F1}h" : "-";
+    }
+
+    private static string GetEfficiencyClass(double percent)
+    {
+        if (percent >= 20) return "adoption-eff-positive";
+        if (percent < 0) return "adoption-eff-negative";
+        return "";
+    }
+
+    private Task<IEnumerable<string>> SearchAreaPaths(string? value, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(value))
+            return Task.FromResult(_areaPaths.AsEnumerable());
+
+        return Task.FromResult(_areaPaths
+            .Where(a => a.Contains(value, StringComparison.OrdinalIgnoreCase))
+            .AsEnumerable());
+    }
+
+    private static string TruncateIteration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Split('\\');
+        return parts.Length > 2 ? string.Join("\\", parts[^2..]) : path;
+    }
+}

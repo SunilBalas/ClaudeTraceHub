@@ -1,0 +1,396 @@
+@page "/branch-creation"
+@rendermode InteractiveServer
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@inject AzureDevOpsService DevOpsService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@using System.Text.RegularExpressions
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+
+<PageTitle>Branch Name Generator - Claude TraceHub</PageTitle>
+
+<div class="page-content">
+
+    <MudText Typo="Typo.h4" Class="mb-4">Branch Name Generator</MudText>
+
+    @* Auto Iteration from TFS *@
+    @if (DevOpsService.IsConfigured)
+    {
+        <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+            <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Auto-detect Current Iteration</MudText>
+            <MudGrid>
+                <MudItem xs="12" sm="5">
+                    <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                               Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                        @foreach (var p in _projects)
+                        {
+                            <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="5">
+                    <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                               Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Disabled="@(_teams.Count == 0)"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                        @foreach (var t in _teams)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="2" Class="d-flex align-end">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                               StartIcon="@(_loadingIteration ? "" : Icons.Material.Filled.Sync)"
+                               OnClick="FetchCurrentIteration"
+                               Disabled="@(string.IsNullOrEmpty(_selectedTeam) || _loadingIteration)"
+                               FullWidth="true">
+                        @if (_loadingIteration)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        }
+                        Fetch
+                    </MudButton>
+                </MudItem>
+            </MudGrid>
+            @if (!string.IsNullOrEmpty(_currentIterationPath))
+            {
+                <MudAlert Severity="Severity.Success" Dense="true" Class="mt-2" NoIcon="false">
+                    Current iteration: <strong>@_currentIterationPath</strong>
+                    &rarr; Using <strong>@_iteration</strong>
+                </MudAlert>
+            }
+        </MudPaper>
+    }
+
+    @* Quick mode: paste full requirement title *@
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Paste Requirement Title</MudText>
+        <MudTextField T="string" @bind-Value="_requirementTitle"
+                      Label="Requirement Title" Variant="Variant.Outlined" Margin="Margin.Dense"
+                      Placeholder="e.g. Requirement 1369489: FX/AX - View request page counts - Show document pages count"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.ContentPaste"
+                      Lines="2" />
+        <div class="d-flex justify-end mt-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                       OnClick="ParseRequirement"
+                       Disabled="@string.IsNullOrWhiteSpace(_requirementTitle)">
+                Parse &amp; Fill
+            </MudButton>
+        </div>
+    </MudPaper>
+
+    @* Manual fields *@
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_branchType" ValueChanged="OnBranchTypeChanged"
+                           Label="Branch Type" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CallSplit">
+                    <MudSelectItem T="string" Value="@("Affected Requirement")">Affected Requirement</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Team Requirement/CHR")">Team Requirement/CHR</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Bug")">Bug</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="_teamName"
+                              Label="Team Name" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Placeholder="e.g. dpf"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Group" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="_iteration"
+                              Label="Iteration" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Placeholder="e.g. PI2026Q1_1"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudTextField T="string" @bind-Value="_tfsId"
+                              Label="TFS ID(s)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Placeholder="e.g. 121212, 131313"
+                              HelperText="Comma or space separated"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudTextField T="string" @bind-Value="_shortDescription"
+                              Label="Short Description" Variant="Variant.Outlined" Margin="Margin.Dense"
+                              Placeholder="e.g. foia_billing"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Description" />
+            </MudItem>
+        </MudGrid>
+
+        <div class="d-flex justify-end mt-4">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.AutoAwesome"
+                       OnClick="GenerateBranchName"
+                       Disabled="@(!IsFormValid)">
+                Generate
+            </MudButton>
+        </div>
+    </MudPaper>
+
+    @if (!string.IsNullOrEmpty(_generatedBranch))
+    {
+        <MudPaper Elevation="2" Class="pa-4" Style="border-radius: 12px;">
+            <MudText Typo="Typo.subtitle2" Color="Color.Secondary" Class="mb-2">Generated Branch Name (editable)</MudText>
+            <div class="d-flex align-center gap-2">
+                <MudTextField T="string" @bind-Value="_generatedBranch"
+                              Variant="Variant.Outlined"
+                              Style="font-family: 'Consolas', 'Courier New', monospace; font-size: 14px;"
+                              Class="flex-grow-1" />
+                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                               Color="Color.Primary" Variant="Variant.Outlined"
+                               OnClick="CopyToClipboard"
+                               aria-label="Copy to clipboard" />
+            </div>
+            <MudText Typo="Typo.caption" Color="@(_generatedBranch.Length > 100 ? Color.Error : Color.Tertiary)" Class="mt-2">
+                Type: @_branchType &bull; @_generatedBranch.Length / 100 chars &bull; You can edit the name above before copying
+            </MudText>
+        </MudPaper>
+    }
+
+</div>
+
+@code {
+    private string _branchType = "Affected Requirement";
+    private string _teamName = "";
+    private string _iteration = "";
+    private string _tfsId = "";
+    private string _shortDescription = "";
+    private string _requirementTitle = "";
+    private string _generatedBranch = "";
+
+    // Auto-iteration fields
+    private List<string> _projects = new();
+    private List<string> _teams = new();
+    private string _selectedProject = "";
+    private string _selectedTeam = "";
+    private string _currentIterationPath = "";
+    private bool _loadingIteration;
+
+    private bool IsFormValid =>
+        !string.IsNullOrWhiteSpace(_teamName) &&
+        !string.IsNullOrWhiteSpace(_iteration) &&
+        !string.IsNullOrWhiteSpace(_tfsId) &&
+        !string.IsNullOrWhiteSpace(_shortDescription);
+
+    protected override void OnInitialized()
+    {
+        if (DevOpsService.IsConfigured)
+        {
+            _projects = AzureSettings.Value.Projects;
+            if (_projects.Count == 1)
+            {
+                _selectedProject = _projects[0];
+                _ = LoadTeams();
+            }
+        }
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedTeam = "";
+        _currentIterationPath = "";
+        await LoadTeams();
+    }
+
+    private async Task LoadTeams()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+        _teams = await DevOpsService.GetTeamsAsync(_selectedProject);
+        StateHasChanged();
+    }
+
+    private async Task OnTeamChanged(string team)
+    {
+        _selectedTeam = team;
+        await FetchCurrentIteration();
+    }
+
+    private async Task FetchCurrentIteration()
+    {
+        if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
+
+        _loadingIteration = true;
+        StateHasChanged();
+
+        try
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                _iteration = FormatIterationForBranch(iterPath);
+                Snackbar.Add($"Current iteration: {_iteration}", Severity.Success);
+            }
+            else
+            {
+                Snackbar.Add("Could not detect current iteration.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error fetching iteration: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loadingIteration = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Converts an iteration path like "ProjectName\PI2026Q1\Sprint 1" to "PI2026Q1_1".
+    /// Falls back to last segment if pattern doesn't match.
+    /// </summary>
+    private static string FormatIterationForBranch(string iterationPath)
+    {
+        var parts = iterationPath.Split('\\');
+
+        if (parts.Length >= 3)
+        {
+            var pi = parts[^2]; // e.g., "PI2026Q1"
+            var sprint = parts[^1]; // e.g., "Sprint 1"
+
+            // Extract sprint number
+            var numMatch = Regex.Match(sprint, @"\d+");
+            if (numMatch.Success)
+                return $"{pi}_{numMatch.Value}";
+
+            // No number in sprint name, use sanitized sprint name
+            return $"{pi}_{SanitizeDescription(sprint)}";
+        }
+
+        if (parts.Length == 2)
+            return SanitizeDescription(parts[^1]);
+
+        return SanitizeDescription(iterationPath);
+    }
+
+    private void OnBranchTypeChanged(string value)
+    {
+        _branchType = value;
+        if (IsFormValid)
+            DoGenerateBranchName();
+    }
+
+    private void ParseRequirement()
+    {
+        if (string.IsNullOrWhiteSpace(_requirementTitle)) return;
+
+        var input = _requirementTitle.Trim();
+
+        // Auto-detect branch type from prefix
+        if (input.StartsWith("Bug", StringComparison.OrdinalIgnoreCase))
+            _branchType = "Bug";
+        else
+            _branchType = "Affected Requirement";
+
+        // Extract TFS ID — first number sequence (typically after "Requirement" or "Bug" and before ":")
+        var idMatch = Regex.Match(input, @"\b(\d{4,})\b");
+        if (idMatch.Success)
+            _tfsId = idMatch.Groups[1].Value;
+
+        // Extract description — everything after the first ":"
+        var colonIdx = input.IndexOf(':');
+        if (colonIdx >= 0 && colonIdx < input.Length - 1)
+        {
+            _shortDescription = input[(colonIdx + 1)..].Trim();
+        }
+        else
+        {
+            // No colon — use everything after the TFS ID
+            var afterId = idMatch.Success ? input[(idMatch.Index + idMatch.Length)..].Trim() : input;
+            _shortDescription = afterId.TrimStart(':', ' ', '-');
+        }
+
+        // Auto-generate if team and iteration are already filled
+        if (IsFormValid)
+            DoGenerateBranchName();
+
+        Snackbar.Add("Parsed! Review the fields and click Generate.", Severity.Info);
+    }
+
+    private Task GenerateBranchName()
+    {
+        DoGenerateBranchName();
+        return Task.CompletedTask;
+    }
+
+    private void DoGenerateBranchName()
+    {
+        var team = _teamName.Trim();
+        var iteration = _iteration.Trim();
+        var tfsIds = ParseTfsIds(_tfsId);
+        var description = SanitizeDescription(_shortDescription);
+
+        // Build prefix (everything before description) to calculate available space
+        var prefix = _branchType switch
+        {
+            "Affected Requirement" => $"{team}/{iteration}/{tfsIds}_",
+            "Team Requirement/CHR" => $"{team}/{iteration}/{tfsIds}/",
+            "Bug" => $"{team}_{iteration}_{tfsIds}_",
+            _ => ""
+        };
+
+        // Truncate description to fit within 100 characters total
+        const int maxLength = 100;
+        var maxDescLen = maxLength - prefix.Length;
+        if (maxDescLen > 0 && description.Length > maxDescLen)
+            description = description[..maxDescLen].TrimEnd('_');
+
+        _generatedBranch = prefix + description;
+    }
+
+    /// <summary>
+    /// Parses TFS IDs from input like "1425640,1425789" or "1425640 1425789" or "1425640, 1425789".
+    /// Returns IDs joined with underscore.
+    /// </summary>
+    private static string ParseTfsIds(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "";
+
+        var ids = Regex.Matches(input, @"\d+")
+            .Select(m => m.Value)
+            .ToList();
+
+        return string.Join("_", ids);
+    }
+
+    private async Task CopyToClipboard()
+    {
+        if (string.IsNullOrEmpty(_generatedBranch)) return;
+
+        await JS.InvokeVoidAsync("copyToClipboard", _generatedBranch);
+        Snackbar.Add("Branch name copied to clipboard!", Severity.Success);
+    }
+
+    private static string SanitizeDescription(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "";
+
+        // Replace common separators with underscore
+        var result = input.Trim()
+            .ToLowerInvariant()
+            .Replace('/', '_')
+            .Replace('-', '_')
+            .Replace(' ', '_');
+
+        // Keep only letters, digits, underscores
+        result = new string(result
+            .Where(c => char.IsLetterOrDigit(c) || c == '_')
+            .ToArray());
+
+        // Collapse multiple underscores into one
+        result = Regex.Replace(result, @"_{2,}", "_");
+
+        // Trim leading/trailing underscores
+        return result.Trim('_');
+    }
+}
