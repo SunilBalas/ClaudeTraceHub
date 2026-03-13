@@ -1,3 +1,7 @@
+window.copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+};
+
 window.downloadFile = (fileName, contentType, bytes) => {
     const blob = new Blob([new Uint8Array(bytes)], { type: contentType });
     const url = URL.createObjectURL(blob);
