@@ -187,11 +187,54 @@ public class AiAdoptionService
     /// <summary>
     /// Query work items using WIQL and return aggregated adoption data.
     /// </summary>
+    /// <summary>
+    /// Fetches the area paths configured for a team via the Team Field Values API.
+    /// </summary>
+    public async Task<List<(string Path, bool IncludeChildren)>> GetTeamAreaPathsAsync(string project, string team)
+    {
+        var areaPaths = new List<(string Path, bool IncludeChildren)>();
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            var encodedTeam = Uri.EscapeDataString(team);
+            var url = $"{encodedProject}/{encodedTeam}/_apis/work/teamsettings/teamfieldvalues?api-version={ApiVersion}";
+            var response = await _httpClient.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Failed to fetch team area paths for {Team}: HTTP {StatusCode}",
+                    team, (int)response.StatusCode);
+                return areaPaths;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("values", out var values))
+            {
+                foreach (var val in values.EnumerateArray())
+                {
+                    var path = val.TryGetProperty("value", out var pathProp) ? pathProp.GetString() ?? "" : "";
+                    var includeChildren = val.TryGetProperty("includeChildren", out var incProp) && incProp.GetBoolean();
+                    if (!string.IsNullOrEmpty(path))
+                        areaPaths.Add((path, includeChildren));
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching team area paths for {Team}", team);
+        }
+
+        return areaPaths;
+    }
+
     public async Task<AdoptionDataBundle> GetAdoptionDataAsync(
         string project,
         List<string>? iterationPaths = null,
         string? disciplineFilter = null,
-        string? areaPath = null)
+        string? areaPath = null,
+        string? team = null)
     {
         var bundle = new AdoptionDataBundle();
 
@@ -212,8 +255,13 @@ public class AiAdoptionService
                 return bundle;
             }
 
-            // Step 2: Build and execute WIQL query
-            var workItemIds = await ExecuteWiqlQueryAsync(project, taskExecField, iterationPaths, areaPath);
+            // Step 2: Get team area paths if team is specified
+            List<(string Path, bool IncludeChildren)>? teamAreaPaths = null;
+            if (!string.IsNullOrEmpty(team))
+                teamAreaPaths = await GetTeamAreaPathsAsync(project, team);
+
+            // Step 3: Build and execute WIQL query
+            var workItemIds = await ExecuteWiqlQueryAsync(project, taskExecField, iterationPaths, areaPath, teamAreaPaths);
             if (workItemIds.Count == 0)
             {
                 bundle.ErrorMessage = "No work items found matching the criteria.";
@@ -255,7 +303,8 @@ public class AiAdoptionService
     }
 
     private async Task<List<int>> ExecuteWiqlQueryAsync(
-        string project, string taskExecField, List<string>? iterationPaths, string? areaPath)
+        string project, string taskExecField, List<string>? iterationPaths, string? areaPath,
+        List<(string Path, bool IncludeChildren)>? teamAreaPaths = null)
     {
         var encodedProject = Uri.EscapeDataString(project);
         var url = $"{encodedProject}/_apis/wit/wiql?api-version={ApiVersion}";
@@ -276,7 +325,16 @@ public class AiAdoptionService
             conditions.Add($"({string.Join(" OR ", iterClauses)})");
         }
 
-        if (!string.IsNullOrEmpty(areaPath))
+        // Team area paths take priority over manual area path filter
+        if (teamAreaPaths is { Count: > 0 })
+        {
+            var areaClauses = teamAreaPaths.Select(ap =>
+                ap.IncludeChildren
+                    ? $"[System.AreaPath] UNDER '{ap.Path}'"
+                    : $"[System.AreaPath] = '{ap.Path}'");
+            conditions.Add($"({string.Join(" OR ", areaClauses)})");
+        }
+        else if (!string.IsNullOrEmpty(areaPath))
             conditions.Add($"[System.AreaPath] UNDER '{areaPath}'");
 
         var wiql = $"SELECT [System.Id] FROM WorkItems WHERE {string.Join(" AND ", conditions)} ORDER BY [System.AssignedTo] ASC";

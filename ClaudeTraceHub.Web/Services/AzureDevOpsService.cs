@@ -421,7 +421,7 @@ public class AzureDevOpsService
     }
 
     /// <summary>
-    /// Lists teams in a project.
+    /// Lists teams in a project, with the authenticated user's teams sorted to the top.
     /// </summary>
     public async Task<List<string>> GetTeamsAsync(string project)
     {
@@ -430,34 +430,71 @@ public class AzureDevOpsService
         try
         {
             var encodedProject = Uri.EscapeDataString(project);
-            var url = $"_apis/projects/{encodedProject}/teams?api-version={ApiVersion}";
-            var response = await _httpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return new();
 
-            var json = await response.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
-            var teams = new List<string>();
+            // Fetch all teams and user's teams in parallel
+            var allTeamsTask = FetchTeamNamesAsync($"_apis/projects/{encodedProject}/teams?api-version={ApiVersion}");
+            var myTeamsTask = FetchTeamNamesAsync($"_apis/projects/{encodedProject}/teams?$mine=true&api-version={ApiVersion}");
 
-            if (doc.RootElement.TryGetProperty("value", out var arr))
-            {
-                foreach (var t in arr.EnumerateArray())
-                {
-                    if (t.TryGetProperty("name", out var name))
-                    {
-                        var n = name.GetString();
-                        if (!string.IsNullOrEmpty(n))
-                            teams.Add(n);
-                    }
-                }
-            }
+            await Task.WhenAll(allTeamsTask, myTeamsTask);
 
-            return teams.OrderBy(t => t).ToList();
+            var allTeams = allTeamsTask.Result;
+            var myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+
+            // Sort: user's teams first (alphabetically), then the rest (alphabetically)
+            return allTeams
+                .OrderByDescending(t => myTeams.Contains(t))
+                .ThenBy(t => t)
+                .ToList();
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Error fetching teams for project {Project}", project);
             return new();
         }
+    }
+
+    /// <summary>
+    /// Gets team names the authenticated user belongs to in a project.
+    /// </summary>
+    public async Task<List<string>> GetMyTeamsAsync(string project)
+    {
+        if (!IsConfigured) return new();
+
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            return await FetchTeamNamesAsync($"_apis/projects/{encodedProject}/teams?$mine=true&api-version={ApiVersion}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching user teams for project {Project}", project);
+            return new();
+        }
+    }
+
+    private async Task<List<string>> FetchTeamNamesAsync(string url)
+    {
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return new();
+
+        var json = await response.Content.ReadAsStringAsync();
+        var doc = JsonDocument.Parse(json);
+        var teams = new List<string>();
+
+        if (doc.RootElement.TryGetProperty("value", out var arr))
+        {
+            foreach (var t in arr.EnumerateArray())
+            {
+                if (t.TryGetProperty("name", out var name))
+                {
+                    var n = name.GetString();
+                    if (!string.IsNullOrEmpty(n))
+                        teams.Add(n);
+                }
+            }
+        }
+
+        return teams.OrderBy(t => t).ToList();
     }
 
     /// <summary>

@@ -24,6 +24,7 @@ builder.Services.AddScoped<ExcelExportService>();
 builder.Services.AddScoped<ThemeService>();
 builder.Services.AddScoped<TfsWorkItemFilterService>();
 builder.Services.AddHttpClient<AiAdoptionService>();
+builder.Services.AddHttpClient<TfsEfficiencyService>();
 
 // Data refresh (filesystem watcher for live updates)
 builder.Services.AddSingleton<DataRefreshService>();

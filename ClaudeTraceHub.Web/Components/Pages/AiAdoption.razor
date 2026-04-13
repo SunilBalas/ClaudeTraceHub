@@ -1,6 +1,7 @@
 @page "/ai-adoption"
 @rendermode InteractiveServer
 @inject AiAdoptionService AdoptionService
+@inject AzureDevOpsService DevOpsService
 @inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
 @inject ISnackbar Snackbar
 @inject IJSRuntime JS
@@ -72,7 +73,7 @@ else
     {
         <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
             <MudGrid>
-                <MudItem xs="12" sm="6" md="3">
+                <MudItem xs="12" sm="6" md="2">
                     <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
                                Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
                                Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
@@ -82,14 +83,45 @@ else
                         }
                     </MudSelect>
                 </MudItem>
-                <MudItem xs="12" sm="6" md="3">
+                <MudItem xs="12" sm="6" md="2">
+                    <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                               Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                        @{
+                            var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                            var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                        }
+                        @if (myTeamsList.Any())
+                        {
+                            <MudSelectItem T="string" Value="@("")" Disabled="true">
+                                <MudText Typo="Typo.overline" Color="Color.Primary">My Teams</MudText>
+                            </MudSelectItem>
+                            @foreach (var t in myTeamsList)
+                            {
+                                <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                            }
+                        }
+                        @if (myTeamsList.Any() && otherTeamsList.Any())
+                        {
+                            <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                                <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                            </MudSelectItem>
+                        }
+                        @foreach (var t in otherTeamsList)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2">
                     <MudAutocomplete T="string" Value="_selectedAreaPath" ValueChanged="OnAreaPathChanged"
                                      SearchFunc="SearchAreaPaths"
                                      Label="Area Path" Variant="Variant.Outlined" Margin="Margin.Dense"
                                      Clearable="true" Dense="true" MaxItems="50"
                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AccountTree" />
                 </MudItem>
-                <MudItem xs="12" sm="6" md="3">
+                <MudItem xs="12" sm="6" md="2">
                     <MudSelect T="string" MultiSelection="true" SelectedValues="_selectedIterations"
                                SelectedValuesChanged="OnIterationsChanged"
                                Label="Iteration Path" Variant="Variant.Outlined" Margin="Margin.Dense"
@@ -312,6 +344,11 @@ else
     private bool _showFilters = true;
     private AdoptionDataBundle _bundle = new();
 
+    // Team auto-detect
+    private List<string> _teams = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
+    private string _selectedTeam = "";
+
     // Filters
     private string _selectedProject = "";
     private string _selectedAreaPath = "";
@@ -327,10 +364,31 @@ else
         if (projects.Count > 0)
         {
             _selectedProject = projects.First();
-            // Load area paths and iterations for the first project
-            _areaPaths = await AdoptionService.GetAreaPathsAsync(_selectedProject);
-            _iterations = await AdoptionService.GetIterationPathsAsync(_selectedProject);
-            // Auto-load data
+
+            // Load teams, area paths, and iterations in parallel
+            var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+            var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+            var areaTask = AdoptionService.GetAreaPathsAsync(_selectedProject);
+            var iterTask = AdoptionService.GetIterationPathsAsync(_selectedProject);
+            await Task.WhenAll(teamsTask, myTeamsTask, areaTask, iterTask);
+
+            _teams = teamsTask.Result;
+            _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+            _areaPaths = areaTask.Result;
+            _iterations = iterTask.Result;
+
+            // Auto-detect current iteration from user's first team
+            if (_myTeams.Count > 0)
+            {
+                _selectedTeam = _myTeams.First();
+                var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+                if (!string.IsNullOrEmpty(iterPath))
+                {
+                    _selectedIterations = new HashSet<string> { iterPath };
+                }
+            }
+
+            // Auto-load data (scoped to current iteration if detected)
             await LoadData();
         }
     }
@@ -341,9 +399,43 @@ else
         _selectedAreaPath = "";
         _selectedIterations = new HashSet<string>();
         _selectedDiscipline = "";
-        _areaPaths = await AdoptionService.GetAreaPathsAsync(project);
-        _iterations = await AdoptionService.GetIterationPathsAsync(project);
+        _selectedTeam = "";
+
+        var teamsTask = DevOpsService.GetTeamsAsync(project);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(project);
+        var areaTask = AdoptionService.GetAreaPathsAsync(project);
+        var iterTask = AdoptionService.GetIterationPathsAsync(project);
+        await Task.WhenAll(teamsTask, myTeamsTask, areaTask, iterTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+        _areaPaths = areaTask.Result;
+        _iterations = iterTask.Result;
+
+        // Auto-detect iteration for user's team
+        if (_myTeams.Count > 0)
+        {
+            _selectedTeam = _myTeams.First();
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(project, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+                _selectedIterations = new HashSet<string> { iterPath };
+        }
+
         StateHasChanged();
+    }
+
+    private async Task OnTeamChanged(string? team)
+    {
+        _selectedTeam = team ?? "";
+        if (!string.IsNullOrEmpty(_selectedTeam) && !string.IsNullOrEmpty(_selectedProject))
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _selectedIterations = new HashSet<string> { iterPath };
+                StateHasChanged();
+            }
+        }
     }
 
     private void OnAreaPathChanged(string? areaPath)
@@ -374,7 +466,8 @@ else
                 _selectedProject,
                 _selectedIterations.Any() ? _selectedIterations.ToList() : null,
                 string.IsNullOrEmpty(_selectedDiscipline) ? null : _selectedDiscipline,
-                string.IsNullOrEmpty(_selectedAreaPath) ? null : _selectedAreaPath);
+                string.IsNullOrEmpty(_selectedAreaPath) ? null : _selectedAreaPath,
+                string.IsNullOrEmpty(_selectedTeam) ? null : _selectedTeam);
 
             // Update discipline filter options from results
             if (_bundle.AvailableDisciplines.Count > 0)

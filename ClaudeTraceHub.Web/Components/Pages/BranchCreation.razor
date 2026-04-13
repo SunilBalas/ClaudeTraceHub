@@ -36,7 +36,27 @@
                                Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
                                Disabled="@(_teams.Count == 0)"
                                Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
-                        @foreach (var t in _teams)
+                        @{
+                            var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                            var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                        }
+                        @if (myTeamsList.Any())
+                        {
+                            <MudSelectItem T="string" Value="@("")" Disabled="true">
+                                <MudText Typo="Typo.overline" Color="Color.Primary">My Team Sprints</MudText>
+                            </MudSelectItem>
+                            @foreach (var t in myTeamsList)
+                            {
+                                <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                            }
+                        }
+                        @if (myTeamsList.Any() && otherTeamsList.Any())
+                        {
+                            <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                                <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                            </MudSelectItem>
+                        }
+                        @foreach (var t in otherTeamsList)
                         {
                             <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
                         }
@@ -167,10 +187,18 @@
     // Auto-iteration fields
     private List<string> _projects = new();
     private List<string> _teams = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
     private string _selectedProject = "";
     private string _selectedTeam = "";
     private string _currentIterationPath = "";
     private bool _loadingIteration;
+
+    // Team name shorthand mappings (TFS team name → short code for branch)
+    private static readonly Dictionary<string, string> TeamShortNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["FX to CPFOIA Migration"] = "FXCPMGR",
+        ["Processing Actions"] = "PA"
+    };
 
     private bool IsFormValid =>
         !string.IsNullOrWhiteSpace(_teamName) &&
@@ -202,13 +230,24 @@
     private async Task LoadTeams()
     {
         if (string.IsNullOrEmpty(_selectedProject)) return;
-        _teams = await DevOpsService.GetTeamsAsync(_selectedProject);
+
+        var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+        await Task.WhenAll(teamsTask, myTeamsTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
         StateHasChanged();
     }
 
     private async Task OnTeamChanged(string team)
     {
         _selectedTeam = team;
+
+        // Auto-fill team name shorthand if a mapping exists
+        if (TeamShortNames.TryGetValue(team, out var shortName))
+            _teamName = shortName;
+
         await FetchCurrentIteration();
     }
 
@@ -246,8 +285,12 @@
     }
 
     /// <summary>
-    /// Converts an iteration path like "ProjectName\PI2026Q1\Sprint 1" to "PI2026Q1_1".
-    /// Falls back to last segment if pattern doesn't match.
+    /// Converts an iteration path to a branch-friendly format.
+    /// Strips the project name (first segment), then removes dashes/spaces but keeps underscores.
+    /// Examples:
+    ///   "CasepointARA\PI-2026-2_1"           → "PI20262_1"
+    ///   "ProjectName\PI2026\2\Sprint 1"       → "PI20262_1"
+    ///   "ProjectName\PI2026Q1\Sprint 1"       → "PI2026Q1_1"
     /// </summary>
     private static string FormatIterationForBranch(string iterationPath)
     {
@@ -255,22 +298,60 @@
 
         if (parts.Length >= 3)
         {
-            var pi = parts[^2]; // e.g., "PI2026Q1"
+            // Skip first segment (project name), last segment is sprint
+            var middleParts = parts[1..^1]; // e.g., ["PI2026", "2"] or ["PI2026Q1"]
+            var piCompact = string.Concat(middleParts.Select(CompactPiSegment));
             var sprint = parts[^1]; // e.g., "Sprint 1"
 
-            // Extract sprint number
             var numMatch = Regex.Match(sprint, @"\d+");
             if (numMatch.Success)
-                return $"{pi}_{numMatch.Value}";
+                return $"{piCompact}_{numMatch.Value}";
 
-            // No number in sprint name, use sanitized sprint name
-            return $"{pi}_{SanitizeDescription(sprint)}";
+            return $"{piCompact}_{CompactPiSegment(sprint)}";
         }
 
+        // 2 segments: "ProjectName\PI-2026-2_1" → take last segment, clean it
         if (parts.Length == 2)
-            return SanitizeDescription(parts[^1]);
+            return CleanIterationName(parts[^1]);
 
-        return SanitizeDescription(iterationPath);
+        return CleanIterationName(iterationPath);
+    }
+
+    /// <summary>
+    /// Cleans an iteration name by replacing dashes/spaces with underscores, preserving case.
+    /// e.g., "PI-2026-2_1" → "PI2026_2_1"
+    /// </summary>
+    private static string CleanIterationName(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "";
+
+        var result = input.Trim()
+            .Replace('-', '_')
+            .Replace(' ', '_');
+
+        // Keep only letters, digits, and underscores
+        result = new string(result
+            .Where(c => char.IsLetterOrDigit(c) || c == '_')
+            .ToArray());
+
+        // Collapse multiple underscores
+        result = Regex.Replace(result, @"_{2,}", "_");
+
+        return result.Trim('_');
+    }
+
+    /// <summary>
+    /// Compacts a PI segment by stripping ALL separators (spaces, underscores, dashes).
+    /// Used for middle path segments that get concatenated together.
+    /// e.g., "PI-2026" → "PI2026", "2" → "2"
+    /// </summary>
+    private static string CompactPiSegment(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return "";
+
+        return new string(input.Trim()
+            .Where(c => char.IsLetterOrDigit(c))
+            .ToArray());
     }
 
     private void OnBranchTypeChanged(string value)
