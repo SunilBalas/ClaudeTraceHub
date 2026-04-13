@@ -20,9 +20,12 @@ public class AdoptionWorkItem
     public string Tags { get; set; } = "";
 
     /// <summary>
-    /// A task is AI if it has the "Claude AI" tag.
+    /// A task is AI if its TaskExecutionType starts with "AI-" (e.g. AI-Dev-Development, AI-UD-Analysis).
+    /// Falls back to "Claude AI" tag if TaskExecutionType is not set.
     /// </summary>
-    public bool IsAiTask => Tags.Contains("Claude AI", StringComparison.OrdinalIgnoreCase);
+    public bool IsAiTask => !string.IsNullOrEmpty(TaskExecutionType)
+        ? TaskExecutionType.StartsWith("AI-", StringComparison.OrdinalIgnoreCase)
+        : Tags.Contains("Claude AI", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// If the task has "Change in Scope" tag and a Revised Estimate, use that instead of Original Estimate.

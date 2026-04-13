@@ -1,0 +1,460 @@
+@page "/tfs-efficiency"
+@rendermode InteractiveServer
+@inject TfsEfficiencyService EfficiencyService
+@inject AzureDevOpsService DevOpsService
+@inject AiAdoptionService AdoptionService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@inject ISnackbar Snackbar
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+
+<PageTitle>TFS Efficiency Tracker - Claude TraceHub</PageTitle>
+
+@if (!EfficiencyService.IsConfigured)
+{
+    <div class="page-content">
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Azure DevOps is not configured. Go to <MudLink Href="/settings" Color="Color.Inherit"><b>Settings</b></MudLink> to set up your connection.
+        </MudAlert>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    <MudText Typo="Typo.h4" Class="mb-4">TFS Efficiency Tracker</MudText>
+
+    @* Team & Iteration Selection *@
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                           Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                    @foreach (var p in _projects)
+                    {
+                        <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                           Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_teams.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                    @{
+                        var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                        var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                    }
+                    @if (myTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Primary">My Teams</MudText>
+                        </MudSelectItem>
+                        @foreach (var t in myTeamsList)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    }
+                    @if (myTeamsList.Any() && otherTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                        </MudSelectItem>
+                    }
+                    @foreach (var t in otherTeamsList)
+                    {
+                        <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_currentIterationPath" ValueChanged="OnIterationChanged"
+                           Label="Iteration" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_iterations.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay">
+                    @foreach (var iter in _iterations)
+                    {
+                        <MudSelectItem T="string" Value="@iter">@TruncateIteration(iter)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudDatePicker @bind-Date="_selectedDate" Label="Date" Variant="Variant.Outlined"
+                               Margin="Margin.Dense" DateFormat="yyyy-MM-dd"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@(_loading ? "" : Icons.Material.Filled.Sync)"
+                           OnClick="LoadData"
+                           Disabled="@(string.IsNullOrEmpty(_currentIterationPath) || _loading)"
+                           FullWidth="true">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        <text>Loading...</text>
+                    }
+                    else
+                    {
+                        <text>Load Data</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @* Loading State *@
+    @if (_loading)
+    {
+        <div class="d-flex align-center justify-center pa-8 gap-2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+            <MudText Typo="Typo.body1" Color="Color.Tertiary">Fetching work item updates...</MudText>
+        </div>
+    }
+
+    @* Error *@
+    @if (!string.IsNullOrEmpty(_bundle.ErrorMessage) && !_loading)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">@_bundle.ErrorMessage</MudAlert>
+    }
+
+    @* Summary Cards *@
+    @if (_bundle.MemberStats.Count > 0 && !_loading)
+    {
+        <MudGrid Class="mb-4">
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Members</MudText>
+                    <MudText Typo="Typo.h4">@_bundle.MemberStats.Count</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Managed TFS</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">@_bundle.ManagedCount</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Not Managed</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Error">@_bundle.NotManagedCount</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Tasks</MudText>
+                    <MudText Typo="Typo.h4">@_bundle.TotalTasks</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        @* Main Data Table *@
+        <MudTable Items="@_bundle.MemberStats" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+                  Class="mb-4" Elevation="2" Style="border-radius: 12px;">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.MemberName)">Member</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:right"><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.CompletedDelta)">Completed (Today)</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:right"><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.RemainingDelta)">Remaining (Today)</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:right"><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.TotalCompleted)">Total Completed</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:right"><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.TotalRemaining)">Total Remaining</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:center"><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.ManagedTfs)">Managed TFS?</MudTableSortLabel></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="Member">
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                               StartIcon="@(_expandedMember == context.MemberName ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               OnClick="@(() => ToggleExpand(context.MemberName))">
+                        <b>@context.MemberName</b>
+                    </MudButton>
+                </MudTd>
+                <MudTd DataLabel="Completed (Today)" Style="text-align:right">
+                    <MudText Color="@(context.CompletedDelta > 0 ? Color.Success : Color.Default)">
+                        @FormatDelta(context.CompletedDelta)
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Remaining (Today)" Style="text-align:right">
+                    <MudText Color="@(context.RemainingDelta < 0 ? Color.Success : context.RemainingDelta > 0 ? Color.Error : Color.Default)">
+                        @FormatDelta(context.RemainingDelta)
+                    </MudText>
+                </MudTd>
+                <MudTd DataLabel="Total Completed" Style="text-align:right">@FormatHours(context.TotalCompleted)</MudTd>
+                <MudTd DataLabel="Total Remaining" Style="text-align:right">@FormatHours(context.TotalRemaining)</MudTd>
+                <MudTd DataLabel="Managed TFS?" Style="text-align:center">
+                    @if (context.ManagedTfs)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                    }
+                    else
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                    }
+                </MudTd>
+            </RowTemplate>
+            <ChildRowContent>
+                @if (_expandedMember == context.MemberName && context.DayHistory.Count > 0)
+                {
+                    <MudTr>
+                        <td colspan="6" class="pa-0">
+                            <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
+                                            Style="background: var(--mud-palette-background-grey);">
+                                <thead>
+                                    <tr>
+                                        <th style="width:40px"></th>
+                                        <th>Date</th>
+                                        <th style="text-align:right">Completed Delta</th>
+                                        <th style="text-align:right">Remaining Delta</th>
+                                        <th style="text-align:right">Work Items Updated</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var day in context.DayHistory)
+                                    {
+                                        var dayKey = $"{context.MemberName}_{day.Date:yyyyMMdd}";
+                                        <tr style="cursor:pointer; @(day.Date.Date == (_selectedDate?.Date ?? DateTime.Today) ? "background: rgba(var(--mud-palette-primary-rgb), 0.08);" : "")"
+                                            @onclick="@(() => ToggleDayExpand(dayKey))">
+                                            <td>
+                                                <MudIcon Icon="@(_expandedDay == dayKey ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                         Size="Size.Small" />
+                                            </td>
+                                            <td>@day.Date.ToString("yyyy-MM-dd")</td>
+                                            <td style="text-align:right; color: @(day.CompletedDelta > 0 ? "var(--mud-palette-success)" : "inherit")">
+                                                @FormatDelta(day.CompletedDelta)
+                                            </td>
+                                            <td style="text-align:right; color: @(day.RemainingDelta < 0 ? "var(--mud-palette-success)" : day.RemainingDelta > 0 ? "var(--mud-palette-error)" : "inherit")">
+                                                @FormatDelta(day.RemainingDelta)
+                                            </td>
+                                            <td style="text-align:right">@day.WorkItemsUpdated</td>
+                                        </tr>
+                                        @if (_expandedDay == dayKey)
+                                        {
+                                            <tr>
+                                                <td colspan="5" class="pa-0">
+                                                    <MudSimpleTable Dense="true" Bordered="true" Class="ml-6 my-1"
+                                                                    Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>ID</th>
+                                                                <th>Task Title</th>
+                                                                <th style="text-align:right">Completed</th>
+                                                                <th style="text-align:right">Remaining</th>
+                                                                <th>Changed By</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach (var detail in day.Details)
+                                                            {
+                                                                <tr>
+                                                                    <td>@detail.WorkItemId</td>
+                                                                    <td style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                                        title="@detail.WorkItemTitle">@detail.WorkItemTitle</td>
+                                                                    <td style="text-align:right">
+                                                                        @if (detail.CompletedWorkDelta != 0)
+                                                                        {
+                                                                            <span style="color: var(--mud-palette-success)">
+                                                                                @FormatDelta(detail.CompletedWorkDelta)
+                                                                            </span>
+                                                                            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                                                                (@detail.CompletedWorkOld &rarr; @detail.CompletedWorkNew)
+                                                                            </MudText>
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            <text>-</text>
+                                                                        }
+                                                                    </td>
+                                                                    <td style="text-align:right">
+                                                                        @if (detail.RemainingWorkDelta != 0)
+                                                                        {
+                                                                            <span style="color: @(detail.RemainingWorkDelta < 0 ? "var(--mud-palette-success)" : "var(--mud-palette-error)")">
+                                                                                @FormatDelta(detail.RemainingWorkDelta)
+                                                                            </span>
+                                                                            <MudText Typo="Typo.caption" Color="Color.Tertiary">
+                                                                                (@detail.RemainingWorkOld &rarr; @detail.RemainingWorkNew)
+                                                                            </MudText>
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            <text>-</text>
+                                                                        }
+                                                                    </td>
+                                                                    <td>@detail.ChangedBy</td>
+                                                                </tr>
+                                                            }
+                                                        </tbody>
+                                                    </MudSimpleTable>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+                        </td>
+                    </MudTr>
+                }
+            </ChildRowContent>
+        </MudTable>
+    }
+
+    </div>
+}
+
+@code {
+    // --- State ---
+    private List<string> _projects = new();
+    private List<string> _teams = new();
+    private List<string> _iterations = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
+    private string _selectedProject = "";
+    private string _selectedTeam = "";
+    private string _currentIterationPath = "";
+    private DateTime? _selectedDate = DateTime.Today;
+    private bool _loading;
+    private string? _expandedMember;
+    private string? _expandedDay;
+    private EfficiencyTrackerBundle _bundle = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = AzureSettings.Value;
+        if (!settings.IsConfigured) return;
+
+        _projects = settings.Projects;
+
+        if (_projects.Count > 0)
+        {
+            _selectedProject = _projects[0];
+            await LoadTeamsAndAutoSelect();
+        }
+    }
+
+    private async Task LoadTeamsAndAutoSelect()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+
+        var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+        var iterTask = AdoptionService.GetIterationPathsAsync(_selectedProject);
+        await Task.WhenAll(teamsTask, myTeamsTask, iterTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+        _iterations = iterTask.Result;
+
+        // Auto-select first "My Team" and detect current iteration
+        if (_myTeams.Count > 0)
+        {
+            _selectedTeam = _myTeams.First();
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedTeam = "";
+        _currentIterationPath = "";
+        _bundle = new();
+        await LoadTeamsAndAutoSelect();
+    }
+
+    private async Task OnTeamChanged(string team)
+    {
+        _selectedTeam = team;
+        _currentIterationPath = "";
+        _bundle = new();
+
+        if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
+
+        try
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+            else
+            {
+                Snackbar.Add("Could not detect current iteration.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnIterationChanged(string iteration)
+    {
+        _currentIterationPath = iteration;
+        _bundle = new();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrEmpty(_currentIterationPath)) return;
+
+        _loading = true;
+        _expandedMember = null;
+        StateHasChanged();
+
+        try
+        {
+            var targetDate = _selectedDate ?? DateTime.Today;
+            _bundle = await EfficiencyService.GetEfficiencyDataAsync(
+                _selectedProject, _selectedTeam, _currentIterationPath, targetDate);
+
+            if (!string.IsNullOrEmpty(_bundle.ErrorMessage))
+                Snackbar.Add(_bundle.ErrorMessage, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            _bundle = new() { ErrorMessage = ex.Message };
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleExpand(string memberName)
+    {
+        _expandedMember = _expandedMember == memberName ? null : memberName;
+        _expandedDay = null;
+    }
+
+    private void ToggleDayExpand(string dayKey)
+    {
+        _expandedDay = _expandedDay == dayKey ? null : dayKey;
+    }
+
+    private static string FormatDelta(double value)
+    {
+        if (value == 0) return "-";
+        var sign = value > 0 ? "+" : "";
+        return $"{sign}{value:F1}h";
+    }
+
+    private static string FormatHours(double value) => value > 0 ? $"{value:F1}h" : "-";
+
+    private static string TruncateIteration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Split('\\');
+        return parts.Length > 2 ? string.Join("\\", parts[^2..]) : path;
+    }
+}
