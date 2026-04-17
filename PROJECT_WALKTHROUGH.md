@@ -46,7 +46,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 | Component          | Technology                     | Version  |
 |--------------------|--------------------------------|----------|
-| Runtime            | .NET 9.0                       | 9.0.308  |
+| Runtime            | .NET 9.0                       | 9.0.312  |
 | Web Framework      | Blazor Server (Interactive)    | -        |
 | UI Components      | MudBlazor                      | 8.15.0   |
 | Excel Export       | ClosedXML                      | 0.105.0  |
@@ -57,7 +57,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 ## 3. Prerequisites
 
-- **.NET 9 SDK** (9.0.308 or compatible) - [download](https://dot.net/download)
+- **.NET 9 SDK** (9.0.312 or compatible) - [download](https://dot.net/download)
 - **Claude Code CLI** installed and used (generates `~/.claude/projects/` data)
 - **Azure DevOps / TFS** instance (optional, for work item integration)
 
@@ -575,7 +575,7 @@ Writes Azure DevOps settings to `usersettings.json`. Works with the configuratio
 
 **NavMenu.razor** — Sidebar navigation with:
 - Dashboard, Projects, Daily Summary, TFS Explorer, Settings links
-- Version and copyright footer (read from assembly metadata)
+- Version and copyright footer (read from assembly metadata; any `+<build-metadata>` suffix from `AssemblyInformationalVersion` is stripped so only the semantic version shows)
 
 ### Pages
 
@@ -600,7 +600,7 @@ Lists all conversation sessions for a specific project. Filterable by first prom
 Full conversation display with:
 - **Header:** Project, date, branch (clickable for TFS lookup), message count
 - **Files Touched:** Expandable panel grouped by Created/Modified/Read. Click any file to open the diff dialog.
-- **Message Thread:** Vertical timeline with user/assistant avatars, Markdown-rendered message content, expandable tool usage details, metadata (timestamp, model, tokens)
+- **Message Thread:** Chat-style layout — user ("You") messages aligned on the right with the avatar on the right, assistant ("Claude") messages aligned on the left with the avatar on the left. Vertical timeline, Markdown-rendered message content, expandable tool usage details, metadata (timestamp, model, tokens)
 - **Export to Excel** button
 
 #### Daily Summary (`/daily-summary`, `/daily-summary/{DateParam}`)
@@ -680,7 +680,7 @@ Custom-styled reconnect modal (replaces Blazor's default). Dark overlay with blu
 **File:** `Directory.Build.props`
 
 ```xml
-<Version>1.2.0</Version>
+<Version>1.7.0</Version>
 ```
 
 This single `<Version>` property drives `AssemblyVersion`, `FileVersion`, and `InformationalVersion` automatically via the .NET SDK.
@@ -719,7 +719,7 @@ The auto command analyzes commits since the last `v*` tag using PowerShell for r
 ## 14. Build & Deployment Scripts
 
 ### scripts/build.bat
-Builds the solution. Sets `MSBuildSDKsPath` to ensure .NET 9 SDK is used.
+Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\9.0.312\Sdks` to ensure the .NET 9 SDK is used.
 
 ### scripts/clean.bat
 Cleans build artifacts (`dotnet clean`).
@@ -750,7 +750,7 @@ Main CLI entry point. Commands:
 | File                    | Description                                     |
 |-------------------------|-------------------------------------------------|
 | `ClaudeTraceHub.sln`   | VS solution file (single project)               |
-| `Directory.Build.props` | Centralized version (1.2.0), author, description|
+| `Directory.Build.props` | Centralized version (1.7.0), author, description|
 | `global.json`           | Pins SDK to 9.0.308                             |
 | `.gitignore`            | .NET/Blazor template + project-specific ignores |
 | `tracehub.bat`          | Main CLI (publish, run, autostart, status, version)|

@@ -286,11 +286,13 @@
 
     /// <summary>
     /// Converts an iteration path to a branch-friendly format.
-    /// Strips the project name (first segment), then removes dashes/spaces but keeps underscores.
+    /// Strips the project name (first segment), merges the letter prefix with its year
+    /// (e.g. "PI" + "2026" → "PI2026"), and joins the remaining tokens with underscores.
     /// Examples:
-    ///   "CasepointARA\PI-2026-2_1"           → "PI20262_1"
-    ///   "ProjectName\PI2026\2\Sprint 1"       → "PI20262_1"
-    ///   "ProjectName\PI2026Q1\Sprint 1"       → "PI2026Q1_1"
+    ///   "CasepointARA\PI-2026-2\Sprint 2"     → "PI2026_2_2"
+    ///   "ProjectName\PI2026\2\Sprint 1"        → "PI2026_2_1"
+    ///   "ProjectName\PI2026Q1\Sprint 1"        → "PI2026Q1_1"
+    ///   "ProjectName\PI-2026-2_1"              → "PI2026_2_1"
     /// </summary>
     private static string FormatIterationForBranch(string iterationPath)
     {
@@ -299,51 +301,60 @@
         if (parts.Length >= 3)
         {
             // Skip first segment (project name), last segment is sprint
-            var middleParts = parts[1..^1]; // e.g., ["PI2026", "2"] or ["PI2026Q1"]
-            var piCompact = string.Concat(middleParts.Select(CompactPiSegment));
+            var middleParts = parts[1..^1];
+            var piFormatted = NormalizePiSegments(middleParts);
             var sprint = parts[^1]; // e.g., "Sprint 1"
 
             var numMatch = Regex.Match(sprint, @"\d+");
             if (numMatch.Success)
-                return $"{piCompact}_{numMatch.Value}";
+                return $"{piFormatted}_{numMatch.Value}";
 
-            return $"{piCompact}_{CompactPiSegment(sprint)}";
+            return $"{piFormatted}_{CompactPiSegment(sprint)}";
         }
 
-        // 2 segments: "ProjectName\PI-2026-2_1" → take last segment, clean it
+        // 2 segments: "ProjectName\PI-2026-2_1" → normalize the last segment
         if (parts.Length == 2)
-            return CleanIterationName(parts[^1]);
+            return NormalizePiSegments(new[] { parts[^1] });
 
-        return CleanIterationName(iterationPath);
+        return NormalizePiSegments(new[] { iterationPath });
     }
 
     /// <summary>
-    /// Cleans an iteration name by replacing dashes/spaces with underscores, preserving case.
-    /// e.g., "PI-2026-2_1" → "PI2026_2_1"
+    /// Normalizes one or more PI path segments into a single underscore-joined token.
+    /// Splits each segment on dashes/spaces/underscores, then merges a trailing letter token
+    /// with the following digit token (e.g. "PI" + "2026" → "PI2026") so the year stays attached
+    /// to its letter prefix.
     /// </summary>
-    private static string CleanIterationName(string input)
+    private static string NormalizePiSegments(IEnumerable<string> segments)
     {
-        if (string.IsNullOrWhiteSpace(input)) return "";
+        var tokens = segments
+            .SelectMany(s => Regex.Split(s ?? "", @"[-\s_\\]+"))
+            .Select(t => new string((t ?? "").Where(char.IsLetterOrDigit).ToArray()))
+            .Where(t => t.Length > 0)
+            .ToList();
 
-        var result = input.Trim()
-            .Replace('-', '_')
-            .Replace(' ', '_');
+        var merged = new List<string>();
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            if (i + 1 < tokens.Count
+                && tokens[i].All(char.IsLetter)
+                && tokens[i + 1].All(char.IsDigit))
+            {
+                merged.Add(tokens[i] + tokens[i + 1]);
+                i++;
+            }
+            else
+            {
+                merged.Add(tokens[i]);
+            }
+        }
 
-        // Keep only letters, digits, and underscores
-        result = new string(result
-            .Where(c => char.IsLetterOrDigit(c) || c == '_')
-            .ToArray());
-
-        // Collapse multiple underscores
-        result = Regex.Replace(result, @"_{2,}", "_");
-
-        return result.Trim('_');
+        return string.Join("_", merged);
     }
 
     /// <summary>
     /// Compacts a PI segment by stripping ALL separators (spaces, underscores, dashes).
-    /// Used for middle path segments that get concatenated together.
-    /// e.g., "PI-2026" → "PI2026", "2" → "2"
+    /// Used when the sprint segment has no digit to extract, e.g., "Sprint Final" → "SprintFinal".
     /// </summary>
     private static string CompactPiSegment(string input)
     {
