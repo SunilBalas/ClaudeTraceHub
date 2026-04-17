@@ -56,10 +56,10 @@
 
     private static readonly Assembly _assembly = Assembly.GetExecutingAssembly();
 
-    private string _version = _assembly
+    private string _version = (_assembly
         .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? _assembly.GetName().Version?.ToString(3)
-        ?? "0.0.0";
+        ?? "0.0.0").Split('+')[0];
 
     private string _copyright = _assembly
         .GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright

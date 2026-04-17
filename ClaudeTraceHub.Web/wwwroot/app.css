@@ -60,6 +60,7 @@ html, body {
 .message-thread {
     position: relative;
     padding-left: 48px;
+    padding-right: 48px;
 }
 
 .message-thread::before {
@@ -80,6 +81,7 @@ html, body {
 .message-wrapper {
     position: relative;
     margin-bottom: 16px;
+    display: flex;
 }
 
 /* Avatar on timeline */
@@ -107,6 +109,22 @@ html, body {
     background-color: var(--mud-palette-primary);
 }
 
+/* User row: bubble on the right, avatar on the right */
+.message-wrapper.user-row {
+    justify-content: flex-end;
+}
+
+.message-wrapper.user-row .message-avatar {
+    left: auto;
+    right: -48px;
+}
+
+/* Assistant row: bubble on the left (default) */
+.message-wrapper.assistant-row {
+    justify-content: flex-start;
+}
+
+
 /* Bubble */
 .message-bubble {
     padding: 14px 18px;
@@ -127,15 +145,13 @@ html, body {
 .message-bubble.user {
     background-color: #E8F5E9;
     border: 1px solid #C8E6C9;
-    border-radius: 12px 12px 12px 4px;
-    margin-right: auto;
+    border-radius: 12px 12px 4px 12px;
 }
 
 .message-bubble.assistant {
     background-color: #EDE7F6;
     border: 1px solid #D1C4E9;
-    border-radius: 12px 12px 4px 12px;
-    margin-left: auto;
+    border-radius: 12px 12px 12px 4px;
 }
 
 /* Dark mode bubbles */

@@ -11,7 +11,7 @@
     <Product>ClaudeTraceHub</Product>
     <Authors>Sunil Balas</Authors>
     <Description>Claude Code conversation trace viewer and TFS work item explorer</Description>
-    <Copyright>Copyright © $([System.DateTime]::Now.Year) Sunil Balas</Copyright>
+    <Copyright>Copyright © $([System.DateTime]::Now.Year) | Sunil Balas</Copyright>
   </PropertyGroup>
 
 </Project>

@@ -189,7 +189,7 @@ else
     <div class="message-thread">
         @foreach (var msg in _conversation.Messages)
         {
-            <div class="message-wrapper">
+            <div class="message-wrapper @(msg.Role == "user" ? "user-row" : "assistant-row")">
                 <div class="message-avatar @msg.Role">
                     @(msg.Role == "user" ? "Y" : "C")
                 </div>
