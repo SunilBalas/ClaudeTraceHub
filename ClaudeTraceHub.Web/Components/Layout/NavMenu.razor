@@ -1,4 +1,5 @@
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 @using System.Reflection
 
 <div class="nav-brand">
@@ -10,40 +11,19 @@
 </div>
 
 <MudNavMenu>
-    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard"
-                Disabled="RequiresSetup">
-        Dashboard
-    </MudNavLink>
-    <MudNavLink Href="/projects" Icon="@Icons.Material.Filled.Folder"
-                Disabled="RequiresSetup">
-        Projects
-    </MudNavLink>
-    <MudNavLink Href="/daily-summary" Icon="@Icons.Material.Filled.CalendarMonth"
-                Disabled="RequiresSetup">
-        Daily Summary
-    </MudNavLink>
-    <MudNavLink Href="/usage-stats" Icon="@Icons.Material.Filled.Analytics"
-                Disabled="RequiresSetup">
-        Usage Statistics
-    </MudNavLink>
-    <MudNavLink Href="/tfs-explorer" Icon="@Icons.Material.Filled.FindInPage"
-                Disabled="RequiresSetup">
-        TFS Explorer
-    </MudNavLink>
-    <MudNavLink Href="/ai-adoption" Icon="@Icons.Material.Filled.GroupWork"
-                Disabled="RequiresSetup">
-        AI Adoption
-    </MudNavLink>
-    <MudNavLink Href="/tfs-efficiency" Icon="@Icons.Material.Filled.Timer"
-                Disabled="RequiresSetup">
-        TFS Efficiency
-    </MudNavLink>
-    <MudNavLink Href="/branch-creation" Icon="@Icons.Material.Filled.CallSplit">
-        Branch Creation
-    </MudNavLink>
+    @foreach (var key in _orderedKeys)
+    {
+        if (_items.TryGetValue(key, out var item))
+        {
+            <MudNavLink Href="@item.Href" Match="@item.Match" Icon="@item.Icon"
+                        Disabled="@(item.RequiresSetupGate && RequiresSetup)">
+                @item.Label
+            </MudNavLink>
+        }
+    }
     <MudDivider Class="my-2" />
-    <MudNavLink Href="/settings" Icon="@Icons.Material.Filled.Settings">
-        Settings
+    <MudNavLink Href="@_settings.Href" Icon="@_settings.Icon">
+        @_settings.Label
     </MudNavLink>
 </MudNavMenu>
 
@@ -64,4 +44,43 @@
     private string _copyright = _assembly
         .GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright
         ?? $"\u00a9 {DateTime.Now.Year}";
+
+    private record NavItem(string Href, string Icon, string Label, NavLinkMatch Match, bool RequiresSetupGate);
+
+    private static readonly Dictionary<string, NavItem> _items = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Dashboard"] = new("/", Icons.Material.Filled.Dashboard, "Dashboard", NavLinkMatch.All, true),
+        ["Projects"] = new("/projects", Icons.Material.Filled.Folder, "Projects", NavLinkMatch.Prefix, true),
+        ["UsageStatistics"] = new("/usage-stats", Icons.Material.Filled.Analytics, "Usage Statistics", NavLinkMatch.Prefix, true),
+        ["TfsExplorer"] = new("/tfs-explorer", Icons.Material.Filled.FindInPage, "TFS Explorer", NavLinkMatch.Prefix, true),
+        ["AiAdoption"] = new("/ai-adoption", Icons.Material.Filled.GroupWork, "AI Adoption", NavLinkMatch.Prefix, true),
+        ["TfsEfficiency"] = new("/tfs-efficiency", Icons.Material.Filled.Timer, "TFS Efficiency", NavLinkMatch.Prefix, true),
+        ["BranchCreation"] = new("/branch-creation", Icons.Material.Filled.CallSplit, "Branch Creation", NavLinkMatch.Prefix, false),
+    };
+
+    private static readonly NavItem _settings =
+        new("/settings", Icons.Material.Filled.Settings, "Settings", NavLinkMatch.Prefix, false);
+
+    private string[] _orderedKeys = Array.Empty<string>();
+
+    protected override void OnInitialized()
+    {
+        var configured = Configuration.GetSection("NavMenu:Order").Get<string[]>() ?? Array.Empty<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ordered = new List<string>();
+
+        foreach (var key in configured)
+        {
+            if (_items.ContainsKey(key) && seen.Add(key))
+                ordered.Add(key);
+        }
+        // Append any tabs missing from config so nothing disappears on misconfiguration.
+        foreach (var key in _items.Keys)
+        {
+            if (seen.Add(key))
+                ordered.Add(key);
+        }
+
+        _orderedKeys = ordered.ToArray();
+    }
 }
