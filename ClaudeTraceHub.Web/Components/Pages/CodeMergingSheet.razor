@@ -1,0 +1,872 @@
+@page "/code-merging"
+@rendermode InteractiveServer
+@inject CodeMergingService MergingService
+@inject AzureDevOpsService DevOpsService
+@inject AiAdoptionService AdoptionService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+@using ClosedXML.Excel
+
+<PageTitle>Code Merging Sheet - Claude TraceHub</PageTitle>
+
+@if (!MergingService.IsConfigured)
+{
+    <div class="page-content">
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Azure DevOps is not configured. Go to <MudLink Href="/settings" Color="Color.Inherit"><b>Settings</b></MudLink> to set up your connection.
+        </MudAlert>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h4">Code Merging Sheet</MudText>
+        @if (_bundle.Requirements.Count > 0 && !_loading)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.FileDownload"
+                       OnClick="ExportToExcel">Export Excel</MudButton>
+        }
+    </div>
+
+    @* Filters *@
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                           Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                    @foreach (var p in _projects)
+                    {
+                        <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                           Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_teams.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                    @{
+                        var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                        var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                    }
+                    @if (myTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Primary">My Teams</MudText>
+                        </MudSelectItem>
+                        @foreach (var t in myTeamsList)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    }
+                    @if (myTeamsList.Any() && otherTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                        </MudSelectItem>
+                    }
+                    @foreach (var t in otherTeamsList)
+                    {
+                        <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_currentIterationPath" ValueChanged="OnIterationChanged"
+                           Label="Iteration" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_iterations.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay">
+                    @foreach (var iter in _iterations)
+                    {
+                        <MudSelectItem T="string" Value="@iter">@TruncateIteration(iter)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Label="Repositories" MultiSelection="true" Variant="Variant.Outlined"
+                           Margin="Margin.Dense" SelectedValues="_selectedRepos"
+                           SelectedValuesChanged="OnReposChanged"
+                           Disabled="@(_repos.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Source"
+                           MultiSelectionTextFunc="@(new Func<List<string>, string>(sel => $"{sel.Count} repo(s)"))">
+                    @foreach (var repo in _repos)
+                    {
+                        <MudSelectItem T="string" Value="@repo.Name">@repo.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="1" Class="d-flex align-center">
+                <MudCheckBox @bind-Value="_deliverableOnly" Label="Deliverable" Color="Color.Primary"
+                             Dense="true" Size="Size.Small" />
+            </MudItem>
+            <MudItem xs="12" sm="3" md="1" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@(_loading ? "" : Icons.Material.Filled.Sync)"
+                           OnClick="LoadData"
+                           Disabled="@(string.IsNullOrEmpty(_currentIterationPath) || _loading)"
+                           FullWidth="true">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        <text>Loading...</text>
+                    }
+                    else
+                    {
+                        <text>Load Data</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @* Target Branch Verification Row *@
+        @if (_bundle.Requirements.Count > 0)
+        {
+            <MudGrid Class="mt-2">
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="string" Value="_selectedMember" ValueChanged="OnMemberChanged"
+                               Label="Member" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person">
+                        <MudSelectItem T="string" Value="@("")">All Members</MudSelectItem>
+                        @foreach (var m in _bundle.Requirements.Select(r => r.AssignedTo).Distinct().OrderBy(n => n))
+                        {
+                            <MudSelectItem T="string" Value="@m">@m</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="4">
+                    <MudTextField @bind-Value="_targetBranch" Label="Target Branch (for merge verification)"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense"
+                                  Placeholder="e.g. main, release/prod"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CallMerge" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
+                               StartIcon="@(_verifying ? "" : Icons.Material.Filled.VerifiedUser)"
+                               OnClick="VerifyMerge"
+                               Disabled="@(string.IsNullOrEmpty(_targetBranch) || _verifying)"
+                               FullWidth="true">
+                        @if (_verifying)
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                            <text>Verifying...</text>
+                        }
+                        else
+                        {
+                            <text>Verify Merge</text>
+                        }
+                    </MudButton>
+                </MudItem>
+                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                {
+                    <MudItem xs="12" sm="6" md="3" Class="d-flex align-center">
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Icon="@Icons.Material.Filled.CheckCircle">
+                            @_bundle.MergedToTargetCount merged
+                        </MudChip>
+                        <MudChip T="string" Color="Color.Error" Size="Size.Small" Icon="@Icons.Material.Filled.Cancel" Class="ml-1">
+                            @_bundle.NotMergedToTargetCount not merged
+                        </MudChip>
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </MudPaper>
+
+    @* Loading State *@
+    @if (_loading)
+    {
+        <div class="d-flex align-center justify-center pa-8 gap-2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+            <MudText Typo="Typo.body1" Color="Color.Tertiary">Fetching requirements and PRs...</MudText>
+        </div>
+    }
+
+    @* Error *@
+    @if (!string.IsNullOrEmpty(_bundle.ErrorMessage) && !_loading)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">@_bundle.ErrorMessage</MudAlert>
+    }
+
+    @* Summary Cards *@
+    @if (_bundle.Requirements.Count > 0 && !_loading)
+    {
+        var filtered = FilteredRequirements();
+        <MudGrid Class="mb-4">
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Requirements</MudText>
+                    <MudText Typo="Typo.h4">@filtered.Count</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Total PRs</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@filtered.Sum(r => r.TotalPRs)</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Commits</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Info">@filtered.Sum(r => r.TotalCommits)</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">With PRs</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">
+                        @filtered.Count(r => r.TotalPRs > 0) / @filtered.Count
+                    </MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        @* Main Data Table *@
+        <MudTable Items="@filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+                  Class="mb-4" Elevation="2" Style="border-radius: 12px;">
+            <HeaderContent>
+                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.WorkItemId)">ID</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.Title)">Title</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.WorkItemType)">Type</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.State)">State</MudTableSortLabel></MudTh>
+                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.AssignedTo)">Assigned To</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:center"><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.TotalPRs)">PRs</MudTableSortLabel></MudTh>
+                <MudTh Style="text-align:center"><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.TotalCommits)">Commits</MudTableSortLabel></MudTh>
+                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                {
+                    <MudTh Style="text-align:center">Merged?</MudTh>
+                }
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="ID">
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                               StartIcon="@(_expandedReq == context.WorkItemId ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               OnClick="@(() => ToggleReqExpand(context.WorkItemId))"
+                               Disabled="@(context.TotalPRs == 0)">
+                        <b>@context.WorkItemId</b>
+                    </MudButton>
+                </MudTd>
+                <MudTd DataLabel="Title">
+                    <span style="max-width:350px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;"
+                          title="@context.Title">@context.Title</span>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@(context.WorkItemType == "Bug" ? Color.Error : Color.Info)">
+                        @context.WorkItemType
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="State">
+                    <MudChip T="string" Size="Size.Small"
+                             Color="@GetStateColor(context.State)">
+                        @context.State
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Assigned To">@context.AssignedTo</MudTd>
+                <MudTd DataLabel="PRs" Style="text-align:center">
+                    @if (context.TotalPRs > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.TotalPRs</MudChip>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Tertiary">0</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Commits" Style="text-align:center">
+                    @if (context.TotalCommits > 0)
+                    {
+                        <MudText Color="Color.Info">@context.TotalCommits</MudText>
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Tertiary">-</MudText>
+                    }
+                </MudTd>
+                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                {
+                    <MudTd DataLabel="Merged?" Style="text-align:center">
+                        @if (context.HasAllPRsMergedToTarget == true)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                        }
+                        else if (context.HasAllPRsMergedToTarget == false)
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                        }
+                        else
+                        {
+                            <MudText Color="Color.Tertiary">-</MudText>
+                        }
+                    </MudTd>
+                }
+            </RowTemplate>
+            <ChildRowContent>
+                @if (_expandedReq == context.WorkItemId && context.PullRequests.Count > 0)
+                {
+                    <MudTr>
+                        <td colspan="@(_bundle.TargetBranchName != null ? 8 : 7)" class="pa-0">
+                            <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
+                                            Style="background: var(--mud-palette-background-grey);">
+                                <thead>
+                                    <tr>
+                                        <th style="width:40px"></th>
+                                        <th>PR ID</th>
+                                        <th>Repository</th>
+                                        <th>Source Branch</th>
+                                        <th>Target Branch</th>
+                                        <th>Status</th>
+                                        <th>Created By</th>
+                                        <th>Created</th>
+                                        <th style="text-align:center">Commits</th>
+                                        @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                        {
+                                            <th style="text-align:center">Merged to @_bundle.TargetBranchName?</th>
+                                        }
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var pr in context.PullRequests)
+                                    {
+                                        var prKey = $"{context.WorkItemId}_{pr.PullRequestId}";
+                                        <tr style="cursor:pointer;" @onclick="@(() => TogglePrExpand(prKey))">
+                                            <td>
+                                                <MudIcon Icon="@(_expandedPR == prKey ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                         Size="Size.Small" />
+                                            </td>
+                                            <td>
+                                                <MudLink Href="@pr.PullRequestUrl" Target="_blank" Color="Color.Primary">
+                                                    @pr.PullRequestId
+                                                </MudLink>
+                                            </td>
+                                            <td>@pr.RepositoryName</td>
+                                            <td title="@pr.SourceBranch" style="min-width:280px;">
+                                                <div class="d-flex align-center gap-1" @onclick:stopPropagation="true">
+                                                    <code style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;">@pr.SourceBranch</code>
+                                                    <MudTooltip Text="Copy branch name">
+                                                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                                       Size="Size.Small" Color="Color.Default"
+                                                                       OnClick="@(() => CopyToClipboard(pr.SourceBranch))" />
+                                                    </MudTooltip>
+                                                </div>
+                                            </td>
+                                            <td><code>@pr.TargetBranch</code></td>
+                                            <td>
+                                                <MudChip T="string" Size="Size.Small"
+                                                         Color="@GetPrStatusColor(pr.Status)">
+                                                    @pr.Status
+                                                </MudChip>
+                                            </td>
+                                            <td>@pr.CreatedBy</td>
+                                            <td>@pr.CreationDate.ToString("yyyy-MM-dd")</td>
+                                            <td style="text-align:center">@pr.Commits.Count</td>
+                                            @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                            {
+                                                <td style="text-align:center">
+                                                    @if (pr.IsMergedToTargetBranch == true)
+                                                    {
+                                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                                                    }
+                                                    else if (pr.IsMergedToTargetBranch == false)
+                                                    {
+                                                        <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <text>-</text>
+                                                    }
+                                                </td>
+                                            }
+                                        </tr>
+                                        @if (_expandedPR == prKey && pr.Commits.Count > 0)
+                                        {
+                                            <tr>
+                                                <td colspan="@(_bundle.TargetBranchName != null ? 10 : 9)" class="pa-0">
+                                                    <MudSimpleTable Dense="true" Bordered="true" Class="ml-6 my-1"
+                                                                    Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Commit SHA</th>
+                                                                <th>Message</th>
+                                                                <th>Author</th>
+                                                                <th>Date</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            @foreach (var commit in pr.Commits)
+                                                            {
+                                                                <tr>
+                                                                    <td>
+                                                                        <div class="d-flex align-center gap-1">
+                                                                            <code title="@commit.CommitId">@commit.ShortId</code>
+                                                                            <MudTooltip Text="Copy full commit ID">
+                                                                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                                                               Size="Size.Small" Color="Color.Default"
+                                                                                               OnClick="@(() => CopyToClipboard(commit.CommitId))" />
+                                                                            </MudTooltip>
+                                                                        </div>
+                                                                    </td>
+                                                                    <td style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                                        title="@commit.Message">@commit.Message</td>
+                                                                    <td>@commit.Author</td>
+                                                                    <td>@commit.AuthorDate.ToString("yyyy-MM-dd HH:mm")</td>
+                                                                </tr>
+                                                            }
+                                                        </tbody>
+                                                    </MudSimpleTable>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+                        </td>
+                    </MudTr>
+                }
+            </ChildRowContent>
+        </MudTable>
+    }
+
+    </div>
+}
+
+@code {
+    // --- State ---
+    private List<string> _projects = new();
+    private List<string> _teams = new();
+    private List<string> _iterations = new();
+    private List<(string Id, string Name)> _repos = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
+    private IEnumerable<string> _selectedRepos = new List<string>();
+    private string _selectedProject = "";
+    private string _selectedTeam = "";
+    private string _currentIterationPath = "";
+    private string _targetBranch = "";
+    private string _selectedMember = "";
+    private bool _deliverableOnly = true;
+    private bool _loading;
+    private bool _verifying;
+    private int? _expandedReq;
+    private string? _expandedPR;
+    private CodeMergingBundle _bundle = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = AzureSettings.Value;
+        if (!settings.IsConfigured) return;
+
+        _projects = settings.Projects;
+
+        if (_projects.Count > 0)
+        {
+            _selectedProject = _projects[0];
+            await LoadTeamsAndAutoSelect();
+        }
+    }
+
+    private async Task LoadTeamsAndAutoSelect()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+
+        var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+        var iterTask = AdoptionService.GetIterationPathsAsync(_selectedProject);
+        var reposTask = MergingService.GetRepositoriesAsync(_selectedProject);
+        await Task.WhenAll(teamsTask, myTeamsTask, iterTask, reposTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+        _iterations = iterTask.Result;
+        // Sort repos: primary repos first, then others alphabetically
+        var primaryRepoNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "CasepointARA", "FX-CPFOIA-Migration" };
+        var primaryRepos = reposTask.Result
+            .Where(r => primaryRepoNames.Contains(r.Name))
+            .OrderBy(r => r.Name)
+            .ToList();
+        var otherRepos = reposTask.Result
+            .Where(r => !primaryRepoNames.Contains(r.Name))
+            .OrderBy(r => r.Name)
+            .ToList();
+        _repos = primaryRepos.Concat(otherRepos).ToList();
+
+        // Default: only select primary repos
+        _selectedRepos = primaryRepos.Select(r => r.Name).ToList();
+
+        if (_myTeams.Count > 0)
+        {
+            _selectedTeam = _myTeams.First();
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedTeam = "";
+        _currentIterationPath = "";
+        _bundle = new();
+        await LoadTeamsAndAutoSelect();
+    }
+
+    private async Task OnTeamChanged(string team)
+    {
+        _selectedTeam = team;
+        _currentIterationPath = "";
+        _selectedMember = "";
+        _bundle = new();
+
+        if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
+
+        try
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+            else
+            {
+                Snackbar.Add("Could not detect current iteration.", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task OnIterationChanged(string iteration)
+    {
+        _currentIterationPath = iteration;
+        _selectedMember = "";
+        _bundle = new();
+        await LoadData();
+    }
+
+    private void OnReposChanged(IEnumerable<string> repos)
+    {
+        _selectedRepos = repos;
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrEmpty(_currentIterationPath)) return;
+
+        _loading = true;
+        _expandedReq = null;
+        _expandedPR = null;
+        StateHasChanged();
+
+        try
+        {
+            var repoNames = _selectedRepos?.ToList();
+            _bundle = await MergingService.GetMergingDataAsync(
+                _selectedProject, _selectedTeam, _currentIterationPath,
+                repoNames, _deliverableOnly, GetRepoTargetBranchFilters());
+
+            if (!string.IsNullOrEmpty(_bundle.ErrorMessage))
+                Snackbar.Add(_bundle.ErrorMessage, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            _bundle = new() { ErrorMessage = ex.Message };
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task VerifyMerge()
+    {
+        if (string.IsNullOrEmpty(_targetBranch) || _bundle.Requirements.Count == 0) return;
+
+        _verifying = true;
+        StateHasChanged();
+
+        try
+        {
+            await MergingService.VerifyMergeToTargetAsync(_bundle, _selectedProject, _targetBranch);
+            Snackbar.Add($"Merge verification complete: {_bundle.MergedToTargetCount} merged, {_bundle.NotMergedToTargetCount} not merged.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error verifying: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _verifying = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleReqExpand(int reqId)
+    {
+        _expandedReq = _expandedReq == reqId ? null : reqId;
+        _expandedPR = null;
+    }
+
+    private void OnMemberChanged(string member)
+    {
+        _selectedMember = member ?? "";
+        _expandedReq = null;
+        _expandedPR = null;
+    }
+
+    private List<RequirementMergingRow> FilteredRequirements()
+    {
+        if (string.IsNullOrEmpty(_selectedMember))
+            return _bundle.Requirements;
+        return _bundle.Requirements
+            .Where(r => string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private void TogglePrExpand(string prKey)
+    {
+        _expandedPR = _expandedPR == prKey ? null : prKey;
+    }
+
+    private static Color GetStateColor(string state) => state.ToLower() switch
+    {
+        "closed" => Color.Success,
+        "resolved" => Color.Warning,
+        "active" => Color.Info,
+        "new" => Color.Default,
+        "proposed" => Color.Default,
+        _ => Color.Default
+    };
+
+    private static Color GetPrStatusColor(string status) => status.ToLower() switch
+    {
+        "completed" => Color.Success,
+        "active" => Color.Info,
+        "abandoned" => Color.Default,
+        _ => Color.Default
+    };
+
+    private async Task CopyToClipboard(string text)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            Snackbar.Add($"Copied: {text[..Math.Min(text.Length, 20)]}", Severity.Success,
+                config => config.VisibleStateDuration = 1000);
+        }
+        catch
+        {
+            Snackbar.Add("Copy failed", Severity.Warning);
+        }
+    }
+
+    /// <summary>
+    /// Returns target branch filter per repo:
+    /// FX-CPFOIA-Migration → main, CasepointARA → dev-qa-net8
+    /// </summary>
+    private Dictionary<string, string> GetRepoTargetBranchFilters()
+    {
+        return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["FX-CPFOIA-Migration"] = "main",
+            ["CasepointARA"] = "dev-qa-net8"
+        };
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            using var workbook = new XLWorkbook();
+
+            // --- Sheet 1: Summary ---
+            var ws = workbook.Worksheets.Add("Code Merging");
+            var headers = new List<string>
+            {
+                "Req ID", "Title", "Type", "State", "Assigned To",
+                "PR ID", "Repository", "Source Branch", "Target Branch",
+                "PR Status", "PR Created By", "PR Created Date",
+                "Commit SHA", "Commit Message", "Commit Author", "Commit Date"
+            };
+
+            var hasVerification = !string.IsNullOrEmpty(_bundle.TargetBranchName);
+            if (hasVerification)
+            {
+                headers.Add($"Merged to {_bundle.TargetBranchName}?");
+            }
+
+            for (int i = 0; i < headers.Count; i++)
+                ws.Cell(1, i + 1).Value = headers[i];
+
+            // Style header
+            var headerRange = ws.Range(1, 1, 1, headers.Count);
+            headerRange.Style.Font.Bold = true;
+            headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#1a1a2e");
+            headerRange.Style.Font.FontColor = XLColor.White;
+            headerRange.Style.Alignment.WrapText = true;
+
+            int row = 2;
+            foreach (var req in FilteredRequirements())
+            {
+                if (req.PullRequests.Count == 0)
+                {
+                    // Requirement with no PRs - still show the requirement row
+                    ws.Cell(row, 1).Value = req.WorkItemId;
+                    ws.Cell(row, 2).Value = req.Title;
+                    ws.Cell(row, 3).Value = req.WorkItemType;
+                    ws.Cell(row, 4).Value = req.State;
+                    ws.Cell(row, 5).Value = req.AssignedTo;
+                    ColorStateCell(ws.Cell(row, 4), req.State);
+                    ColorTypeCell(ws.Cell(row, 3), req.WorkItemType);
+                    row++;
+                }
+                else
+                {
+                    foreach (var pr in req.PullRequests)
+                    {
+                        if (pr.Commits.Count == 0)
+                        {
+                            // PR with no commits
+                            ws.Cell(row, 1).Value = req.WorkItemId;
+                            ws.Cell(row, 2).Value = req.Title;
+                            ws.Cell(row, 3).Value = req.WorkItemType;
+                            ws.Cell(row, 4).Value = req.State;
+                            ws.Cell(row, 5).Value = req.AssignedTo;
+                            ws.Cell(row, 6).Value = pr.PullRequestId;
+                            ws.Cell(row, 7).Value = pr.RepositoryName;
+                            ws.Cell(row, 8).Value = pr.SourceBranch;
+                            ws.Cell(row, 9).Value = pr.TargetBranch;
+                            ws.Cell(row, 10).Value = pr.Status;
+                            ws.Cell(row, 11).Value = pr.CreatedBy;
+                            ws.Cell(row, 12).Value = pr.CreationDate.ToString("yyyy-MM-dd");
+                            ColorStateCell(ws.Cell(row, 4), req.State);
+                            ColorTypeCell(ws.Cell(row, 3), req.WorkItemType);
+                            ColorPrStatusCell(ws.Cell(row, 10), pr.Status);
+                            if (hasVerification)
+                                ws.Cell(row, 17).Value = pr.IsMergedToTargetBranch == true ? "Yes" : pr.IsMergedToTargetBranch == false ? "No" : "-";
+                            row++;
+                        }
+                        else
+                        {
+                            foreach (var commit in pr.Commits)
+                            {
+                                ws.Cell(row, 1).Value = req.WorkItemId;
+                                ws.Cell(row, 2).Value = req.Title;
+                                ws.Cell(row, 3).Value = req.WorkItemType;
+                                ws.Cell(row, 4).Value = req.State;
+                                ws.Cell(row, 5).Value = req.AssignedTo;
+                                ws.Cell(row, 6).Value = pr.PullRequestId;
+                                ws.Cell(row, 7).Value = pr.RepositoryName;
+                                ws.Cell(row, 8).Value = pr.SourceBranch;
+                                ws.Cell(row, 9).Value = pr.TargetBranch;
+                                ws.Cell(row, 10).Value = pr.Status;
+                                ws.Cell(row, 11).Value = pr.CreatedBy;
+                                ws.Cell(row, 12).Value = pr.CreationDate.ToString("yyyy-MM-dd");
+                                ws.Cell(row, 13).Value = commit.CommitId;
+                                ws.Cell(row, 14).Value = commit.Message;
+                                ws.Cell(row, 15).Value = commit.Author;
+                                ws.Cell(row, 16).Value = commit.AuthorDate.ToString("yyyy-MM-dd HH:mm");
+                                ColorStateCell(ws.Cell(row, 4), req.State);
+                                ColorTypeCell(ws.Cell(row, 3), req.WorkItemType);
+                                ColorPrStatusCell(ws.Cell(row, 10), pr.Status);
+                                if (hasVerification)
+                                    ws.Cell(row, 17).Value = pr.IsMergedToTargetBranch == true ? "Yes" : pr.IsMergedToTargetBranch == false ? "No" : "-";
+                                row++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Auto-fit but set min widths for key columns
+            ws.Columns().AdjustToContents();
+            ws.Column(2).Width = Math.Max(ws.Column(2).Width, 40);  // Title
+            ws.Column(8).Width = Math.Max(ws.Column(8).Width, 50);  // Source Branch (full, no truncation)
+            ws.Column(13).Width = Math.Max(ws.Column(13).Width, 42); // Full commit SHA
+            ws.Column(14).Width = Math.Max(ws.Column(14).Width, 50); // Commit Message
+
+            // Freeze header row
+            ws.SheetView.FreezeRows(1);
+
+            using var ms = new MemoryStream();
+            workbook.SaveAs(ms);
+            var bytes = ms.ToArray();
+
+            var fileName = $"CodeMerging_{_selectedTeam.Replace(" ", "_")}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+
+            Snackbar.Add("Excel exported!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private static void ColorStateCell(IXLCell cell, string state)
+    {
+        var (bg, fg) = state.ToLower() switch
+        {
+            "closed" => (XLColor.FromHtml("#2e7d32"), XLColor.White),
+            "resolved" => (XLColor.FromHtml("#f57c00"), XLColor.White),
+            "active" => (XLColor.FromHtml("#1565c0"), XLColor.White),
+            "proposed" => (XLColor.FromHtml("#757575"), XLColor.White),
+            _ => (XLColor.NoColor, XLColor.Black)
+        };
+        if (bg != XLColor.NoColor)
+        {
+            cell.Style.Fill.BackgroundColor = bg;
+            cell.Style.Font.FontColor = fg;
+        }
+    }
+
+    private static void ColorTypeCell(IXLCell cell, string type)
+    {
+        if (type.Equals("Bug", StringComparison.OrdinalIgnoreCase))
+        {
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#c62828");
+            cell.Style.Font.FontColor = XLColor.White;
+        }
+        else
+        {
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1565c0");
+            cell.Style.Font.FontColor = XLColor.White;
+        }
+    }
+
+    private static void ColorPrStatusCell(IXLCell cell, string status)
+    {
+        if (status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+        {
+            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#2e7d32");
+            cell.Style.Font.FontColor = XLColor.White;
+        }
+    }
+
+    private static string TruncateIteration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Split('\\');
+        return parts.Length > 2 ? string.Join("\\", parts[^2..]) : path;
+    }
+}

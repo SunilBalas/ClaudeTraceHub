@@ -1,0 +1,603 @@
+@page "/planning-verification"
+@rendermode InteractiveServer
+@inject PlanningVerificationService VerificationService
+@inject AzureDevOpsService DevOpsService
+@inject AiAdoptionService AdoptionService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+@using ClosedXML.Excel
+
+<PageTitle>Planning Verification - Claude TraceHub</PageTitle>
+
+@if (!VerificationService.IsConfigured)
+{
+    <div class="page-content">
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Azure DevOps is not configured. Go to <MudLink Href="/settings" Color="Color.Inherit"><b>Settings</b></MudLink> to set up your connection.
+        </MudAlert>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h4">Planning Verification</MudText>
+        @if (_bundle.Requirements.Count > 0 && !_loading)
+        {
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                       StartIcon="@Icons.Material.Filled.FileDownload"
+                       OnClick="ExportToExcel">Export Excel</MudButton>
+        }
+    </div>
+
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                           Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                    @foreach (var p in _projects)
+                    {
+                        <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                           Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_teams.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                    @{
+                        var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                        var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                    }
+                    @if (myTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Primary">My Teams</MudText>
+                        </MudSelectItem>
+                        @foreach (var t in myTeamsList)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    }
+                    @if (myTeamsList.Any() && otherTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                        </MudSelectItem>
+                    }
+                    @foreach (var t in otherTeamsList)
+                    {
+                        <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_currentIterationPath" ValueChanged="OnIterationChanged"
+                           Label="Iteration" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_iterations.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay">
+                    @foreach (var iter in _iterations)
+                    {
+                        <MudSelectItem T="string" Value="@iter">@TruncateIteration(iter)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedMember" ValueChanged="OnMemberChanged"
+                           Label="Member" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Clearable="true"
+                           Disabled="@(_bundle.Requirements.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person">
+                    <MudSelectItem T="string" Value="@("")">All Members</MudSelectItem>
+                    @foreach (var m in _bundle.Requirements
+                                            .SelectMany(r => r.Tasks.Select(t => t.AssignedTo)
+                                                .Concat(new[] { r.AssignedTo }))
+                                            .Distinct().OrderBy(n => n))
+                    {
+                        <MudSelectItem T="string" Value="@m">@m</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="3" md="1" Class="d-flex align-center">
+                <MudCheckBox @bind-Value="_onlyIssues" Label="Issues only" Color="Color.Primary"
+                             Dense="true" Size="Size.Small" />
+            </MudItem>
+            <MudItem xs="12" sm="3" md="1" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@(_loading ? "" : Icons.Material.Filled.Sync)"
+                           OnClick="LoadData"
+                           Disabled="@(string.IsNullOrEmpty(_currentIterationPath) || _loading)"
+                           FullWidth="true">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        <text>Loading...</text>
+                    }
+                    else
+                    {
+                        <text>Verify</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_loading)
+    {
+        <div class="d-flex align-center justify-center pa-8 gap-2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+            <MudText Typo="Typo.body1" Color="Color.Tertiary">Verifying tasks...</MudText>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_bundle.ErrorMessage) && !_loading)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">@_bundle.ErrorMessage</MudAlert>
+    }
+
+    @if (_bundle.Requirements.Count > 0 && !_loading)
+    {
+        var filtered = FilteredRequirements();
+        var totalIssues = filtered.Sum(r => r.IssueCount);
+        var reqsWithIssues = filtered.Count(r => r.HasIssues);
+        var totalTasks = filtered.Sum(r => r.Tasks.Count);
+        var tasksWithIssues = filtered.Sum(r => r.TasksWithIssuesCount);
+
+        <MudGrid Class="mb-4">
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Requirements</MudText>
+                    <MudText Typo="Typo.h4">@filtered.Count</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Tasks</MudText>
+                    <MudText Typo="Typo.h4">@totalTasks</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Reqs w/ Issues</MudText>
+                    <MudText Typo="Typo.h4" Color="@(reqsWithIssues > 0 ? Color.Error : Color.Success)">@reqsWithIssues</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Tasks w/ Issues</MudText>
+                    <MudText Typo="Typo.h4" Color="@(tasksWithIssues > 0 ? Color.Error : Color.Success)">@tasksWithIssues</MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+                  Class="mb-4" Elevation="2" Style="border-radius: 12px;">
+            <HeaderContent>
+                <MudTh>ID</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>State</MudTh>
+                <MudTh>Assigned To</MudTh>
+                <MudTh>Tags</MudTh>
+                <MudTh Style="text-align:center">Tasks</MudTh>
+                <MudTh Style="text-align:center">Issues</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="ID">
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                               StartIcon="@(_expandedReq == context.WorkItemId ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               OnClick="@(() => ToggleReqExpand(context.WorkItemId))"
+                               Disabled="@(context.Tasks.Count == 0 && context.Issues.Count == 0)">
+                        <b>@context.WorkItemId</b>
+                    </MudButton>
+                </MudTd>
+                <MudTd DataLabel="Title">
+                    <span style="max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;"
+                          title="@context.Title">@context.Title</span>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@(context.WorkItemType == "Bug" ? Color.Error : Color.Info)">
+                        @context.WorkItemType
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="State">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStateColor(context.State)">@context.State</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Assigned To">@context.AssignedTo</MudTd>
+                <MudTd DataLabel="Tags">
+                    @if (!string.IsNullOrWhiteSpace(context.Tags))
+                    {
+                        @foreach (var tag in context.Tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Default" Class="ma-0">@tag</MudChip>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Tertiary">-</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Tasks" Style="text-align:center">@context.Tasks.Count</MudTd>
+                <MudTd DataLabel="Issues" Style="text-align:center">
+                    @if (context.IssueCount > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">
+                            @context.IssueCount
+                        </MudChip>
+                    }
+                    else
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                    }
+                </MudTd>
+            </RowTemplate>
+            <ChildRowContent>
+                @if (_expandedReq == context.WorkItemId)
+                {
+                    <MudTr>
+                        <td colspan="8" class="pa-2" style="background: var(--mud-palette-background-grey);">
+                            @if (context.Issues.Count > 0)
+                            {
+                                <div class="mb-2">
+                                    <MudText Typo="Typo.subtitle2" Color="Color.Error">Requirement Issues</MudText>
+                                    @foreach (var issue in context.Issues)
+                                    {
+                                        <MudAlert Severity="Severity.Error" Dense="true" Class="my-1">
+                                            <b>@issue.Rule:</b> @issue.Message
+                                        </MudAlert>
+                                    }
+                                </div>
+                            }
+
+                            @if (context.Tasks.Count > 0)
+                            {
+                                <MudSimpleTable Dense="true" Bordered="true" Class="my-1"
+                                                Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Task Title</th>
+                                            <th>Detected Type</th>
+                                            <th>Discipline</th>
+                                            <th>Exec Type</th>
+                                            <th style="text-align:right">Orig Est</th>
+                                            <th>Tags</th>
+                                            <th>Issues</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var task in context.Tasks)
+                                        {
+                                            <tr style="background: @(task.Issues.Count > 0 ? "rgba(244, 67, 54, 0.08)" : "transparent");">
+                                                <td>@task.WorkItemId</td>
+                                                <td title="@task.Title"
+                                                    style="max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                                                    @task.Title
+                                                </td>
+                                                <td>
+                                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                             Color="@(task.DetectedTaskType == "Unknown" ? Color.Warning : Color.Info)">
+                                                        @task.DetectedTaskType
+                                                    </MudChip>
+                                                </td>
+                                                <td>@(string.IsNullOrEmpty(task.Discipline) ? "—" : task.Discipline)</td>
+                                                <td>@(string.IsNullOrEmpty(task.TaskExecutionType) ? "—" : task.TaskExecutionType)</td>
+                                                <td style="text-align:right">@(task.OriginalEstimate > 0 ? $"{task.OriginalEstimate:F1}" : "—")</td>
+                                                <td>@(string.IsNullOrEmpty(task.Tags) ? "—" : task.Tags)</td>
+                                                <td>
+                                                    @if (task.Issues.Count == 0)
+                                                    {
+                                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <ul style="margin:0; padding-left:1rem;">
+                                                            @foreach (var iss in task.Issues)
+                                                            {
+                                                                <li><b>@iss.Rule:</b> @iss.Message</li>
+                                                            }
+                                                        </ul>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            }
+                            else
+                            {
+                                <MudAlert Severity="Severity.Info" Dense="true">No tasks linked to this requirement.</MudAlert>
+                            }
+                        </td>
+                    </MudTr>
+                }
+            </ChildRowContent>
+        </MudTable>
+    }
+
+    </div>
+}
+
+@code {
+    private List<string> _projects = new();
+    private List<string> _teams = new();
+    private List<string> _iterations = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
+    private string _selectedProject = "";
+    private string _selectedTeam = "";
+    private string _currentIterationPath = "";
+    private string _selectedMember = "";
+    private bool _loading;
+    private bool _onlyIssues;
+    private int? _expandedReq;
+    private PlanningVerificationBundle _bundle = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = AzureSettings.Value;
+        if (!settings.IsConfigured) return;
+
+        _projects = settings.Projects;
+
+        if (_projects.Count > 0)
+        {
+            _selectedProject = _projects[0];
+            await LoadTeamsAndAutoSelect();
+        }
+    }
+
+    private async Task LoadTeamsAndAutoSelect()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+
+        var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+        var iterTask = AdoptionService.GetIterationPathsAsync(_selectedProject);
+        await Task.WhenAll(teamsTask, myTeamsTask, iterTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+        _iterations = iterTask.Result;
+
+        if (_myTeams.Count > 0)
+        {
+            _selectedTeam = _myTeams.First();
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedTeam = "";
+        _currentIterationPath = "";
+        _selectedMember = "";
+        _bundle = new();
+        await LoadTeamsAndAutoSelect();
+    }
+
+    private async Task OnTeamChanged(string team)
+    {
+        _selectedTeam = team;
+        _currentIterationPath = "";
+        _selectedMember = "";
+        _bundle = new();
+
+        if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
+        try
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnIterationChanged(string iteration)
+    {
+        _currentIterationPath = iteration;
+        _selectedMember = "";
+        _bundle = new();
+        await LoadData();
+    }
+
+    private void OnMemberChanged(string member)
+    {
+        _selectedMember = member ?? "";
+        _expandedReq = null;
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrEmpty(_currentIterationPath)) return;
+
+        _loading = true;
+        _expandedReq = null;
+        StateHasChanged();
+
+        try
+        {
+            _bundle = await VerificationService.GetVerificationDataAsync(
+                _selectedProject, _selectedTeam, _currentIterationPath);
+
+            if (!string.IsNullOrEmpty(_bundle.ErrorMessage))
+                Snackbar.Add(_bundle.ErrorMessage, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            _bundle = new() { ErrorMessage = ex.Message };
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleReqExpand(int reqId)
+    {
+        _expandedReq = _expandedReq == reqId ? null : reqId;
+    }
+
+    private List<RequirementVerificationRow> FilteredRequirements()
+    {
+        IEnumerable<RequirementVerificationRow> q = _bundle.Requirements;
+
+        if (!string.IsNullOrEmpty(_selectedMember))
+        {
+            q = q.Where(r =>
+                string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase)
+                || r.Tasks.Any(t => string.Equals(t.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase)))
+                .Select(r =>
+                {
+                    var clone = new RequirementVerificationRow
+                    {
+                        WorkItemId = r.WorkItemId,
+                        Title = r.Title,
+                        State = r.State,
+                        AssignedTo = r.AssignedTo,
+                        WorkItemType = r.WorkItemType,
+                        Tags = r.Tags,
+                        Issues = r.Issues,
+                        Tasks = r.Tasks
+                            .Where(t => string.Equals(t.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase))
+                            .ToList()
+                    };
+                    return clone;
+                });
+        }
+
+        if (_onlyIssues)
+            q = q.Where(r => r.HasIssues);
+
+        return q.ToList();
+    }
+
+    private static Color GetStateColor(string state) => state.ToLower() switch
+    {
+        "closed" => Color.Success,
+        "resolved" => Color.Warning,
+        "active" => Color.Info,
+        "new" => Color.Default,
+        "proposed" => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string TruncateIteration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Split('\\');
+        return parts.Length > 2 ? string.Join("\\", parts[^2..]) : path;
+    }
+
+    private async Task ExportToExcel()
+    {
+        try
+        {
+            using var workbook = new XLWorkbook();
+            var ws = workbook.Worksheets.Add("Planning Verification");
+
+            var headers = new[]
+            {
+                "Req ID", "Title", "Type", "State", "Assigned To", "Req Tags", "Req Issues",
+                "Task ID", "Task Title", "Detected Type", "Discipline", "Exec Type",
+                "Orig Est", "Task Tags", "Task Issues"
+            };
+            for (int i = 0; i < headers.Length; i++)
+                ws.Cell(1, i + 1).Value = headers[i];
+
+            var headerRange = ws.Range(1, 1, 1, headers.Length);
+            headerRange.Style.Font.Bold = true;
+            headerRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#1a1a2e");
+            headerRange.Style.Font.FontColor = XLColor.White;
+
+            int row = 2;
+            foreach (var req in FilteredRequirements())
+            {
+                var reqIssuesText = string.Join("; ", req.Issues.Select(i => $"{i.Rule}: {i.Message}"));
+
+                if (req.Tasks.Count == 0)
+                {
+                    ws.Cell(row, 1).Value = req.WorkItemId;
+                    ws.Cell(row, 2).Value = req.Title;
+                    ws.Cell(row, 3).Value = req.WorkItemType;
+                    ws.Cell(row, 4).Value = req.State;
+                    ws.Cell(row, 5).Value = req.AssignedTo;
+                    ws.Cell(row, 6).Value = req.Tags;
+                    ws.Cell(row, 7).Value = reqIssuesText;
+                    if (!string.IsNullOrEmpty(reqIssuesText))
+                        ws.Cell(row, 7).Style.Fill.BackgroundColor = XLColor.FromHtml("#ffcdd2");
+                    row++;
+                }
+                else
+                {
+                    foreach (var task in req.Tasks)
+                    {
+                        ws.Cell(row, 1).Value = req.WorkItemId;
+                        ws.Cell(row, 2).Value = req.Title;
+                        ws.Cell(row, 3).Value = req.WorkItemType;
+                        ws.Cell(row, 4).Value = req.State;
+                        ws.Cell(row, 5).Value = req.AssignedTo;
+                        ws.Cell(row, 6).Value = req.Tags;
+                        ws.Cell(row, 7).Value = reqIssuesText;
+                        ws.Cell(row, 8).Value = task.WorkItemId;
+                        ws.Cell(row, 9).Value = task.Title;
+                        ws.Cell(row, 10).Value = task.DetectedTaskType;
+                        ws.Cell(row, 11).Value = task.Discipline;
+                        ws.Cell(row, 12).Value = task.TaskExecutionType;
+                        ws.Cell(row, 13).Value = task.OriginalEstimate;
+                        ws.Cell(row, 14).Value = task.Tags;
+                        var taskIssuesText = string.Join("; ", task.Issues.Select(i => $"{i.Rule}: {i.Message}"));
+                        ws.Cell(row, 15).Value = taskIssuesText;
+                        if (!string.IsNullOrEmpty(taskIssuesText))
+                            ws.Cell(row, 15).Style.Fill.BackgroundColor = XLColor.FromHtml("#ffcdd2");
+                        if (!string.IsNullOrEmpty(reqIssuesText))
+                            ws.Cell(row, 7).Style.Fill.BackgroundColor = XLColor.FromHtml("#ffcdd2");
+                        row++;
+                    }
+                }
+            }
+
+            ws.Columns().AdjustToContents();
+            ws.Column(2).Width = Math.Max(ws.Column(2).Width, 40);
+            ws.Column(9).Width = Math.Max(ws.Column(9).Width, 40);
+            ws.Column(7).Width = Math.Max(ws.Column(7).Width, 40);
+            ws.Column(15).Width = Math.Max(ws.Column(15).Width, 50);
+            ws.SheetView.FreezeRows(1);
+
+            using var ms = new MemoryStream();
+            workbook.SaveAs(ms);
+            var bytes = ms.ToArray();
+            var fileName = $"PlanningVerification_{_selectedTeam.Replace(" ", "_")}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            await JSRuntime.InvokeVoidAsync("downloadFile", fileName,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes);
+            Snackbar.Add("Excel exported!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+    }
+}
