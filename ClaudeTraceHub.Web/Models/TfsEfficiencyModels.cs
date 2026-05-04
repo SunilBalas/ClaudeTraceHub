@@ -21,6 +21,30 @@ public class WorkItemFieldDelta
 }
 
 /// <summary>
+/// A single comment on a work item.
+/// </summary>
+public class WorkItemComment
+{
+    public int WorkItemId { get; set; }
+    public string WorkItemTitle { get; set; } = "";
+    public string Text { get; set; } = "";
+    public string CreatedBy { get; set; } = "";
+    public DateTime CreatedDate { get; set; }
+}
+
+/// <summary>
+/// Per-task snapshot shown when a member row is expanded.
+/// </summary>
+public class TaskSummary
+{
+    public int WorkItemId { get; set; }
+    public string Title { get; set; } = "";
+    public double OriginalEstimate { get; set; }
+    public double CompletedWork { get; set; }
+    public double RemainingWork { get; set; }
+}
+
+/// <summary>
 /// Day-wise breakdown row shown in the expandable detail section.
 /// </summary>
 public class DayWiseBreakdown
@@ -30,6 +54,8 @@ public class DayWiseBreakdown
     public double RemainingDelta { get; set; }
     public int WorkItemsUpdated { get; set; }
     public List<WorkItemFieldDelta> Details { get; set; } = new();
+    /// <summary>Comments on this date, keyed by work item ID.</summary>
+    public Dictionary<int, List<WorkItemComment>> CommentsByWorkItem { get; set; } = new();
 }
 
 /// <summary>
@@ -43,6 +69,7 @@ public class MemberDailyEfficiency
     public double TotalCompleted { get; set; }
     public double TotalRemaining { get; set; }
     public bool ManagedTfs { get; set; }
+    public List<TaskSummary> Tasks { get; set; } = new();
     public List<DayWiseBreakdown> DayHistory { get; set; } = new();
 }
 

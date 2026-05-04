@@ -72,11 +72,15 @@ public class TfsEfficiencyService
             // Step 3: Fetch current work item details (AssignedTo, CompletedWork, RemainingWork)
             var workItems = await FetchWorkItemDetailsAsync(project, workItemIds);
 
-            // Step 4: Fetch updates for each work item (parallel, throttled)
-            var allDeltas = await FetchAllWorkItemUpdatesAsync(project, workItems);
+            // Step 4: Fetch updates and comments for each work item (parallel, throttled)
+            var updatesTask = FetchAllWorkItemUpdatesAsync(project, workItems);
+            var commentsTask = FetchAllWorkItemCommentsAsync(project, workItemIds);
+            await Task.WhenAll(updatesTask, commentsTask);
+            var allDeltas = updatesTask.Result;
+            var allComments = commentsTask.Result;
 
             // Step 5: Aggregate by member
-            bundle.MemberStats = AggregateByMemberAndDate(allDeltas, workItems, targetDate);
+            bundle.MemberStats = AggregateByMemberAndDate(allDeltas, workItems, targetDate, allComments);
             bundle.ManagedCount = bundle.MemberStats.Count(m => m.ManagedTfs);
             bundle.NotManagedCount = bundle.MemberStats.Count(m => !m.ManagedTfs);
         }
@@ -183,12 +187,13 @@ public class TfsEfficiencyService
         return ids;
     }
 
-    private async Task<List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork)>>
+    private async Task<List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork, double OriginalEstimate)>>
         FetchWorkItemDetailsAsync(string project, List<int> ids)
     {
-        var allItems = new List<(int, string, string, double, double)>();
+        var allItems = new List<(int, string, string, double, double, double)>();
         var fields = "System.Id,System.Title,System.AssignedTo," +
-                     "Microsoft.VSTS.Scheduling.CompletedWork,Microsoft.VSTS.Scheduling.RemainingWork";
+                     "Microsoft.VSTS.Scheduling.CompletedWork,Microsoft.VSTS.Scheduling.RemainingWork," +
+                     "Microsoft.VSTS.Scheduling.OriginalEstimate";
 
         const int batchSize = 200;
         for (var i = 0; i < ids.Count; i += batchSize)
@@ -220,7 +225,8 @@ public class TfsEfficiencyService
                             GetStringField(f, "System.Title"),
                             GetAssignedToName(f),
                             GetDoubleField(f, "Microsoft.VSTS.Scheduling.CompletedWork"),
-                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.RemainingWork")
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.RemainingWork"),
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.OriginalEstimate")
                         ));
                     }
                 }
@@ -236,7 +242,7 @@ public class TfsEfficiencyService
 
     private async Task<List<WorkItemFieldDelta>> FetchAllWorkItemUpdatesAsync(
         string project,
-        List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork)> workItems)
+        List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork, double OriginalEstimate)> workItems)
     {
         var allDeltas = new List<WorkItemFieldDelta>();
         var lockObj = new object();
@@ -371,11 +377,101 @@ public class TfsEfficiencyService
         return deltas;
     }
 
+    private async Task<Dictionary<int, List<WorkItemComment>>> FetchAllWorkItemCommentsAsync(
+        string project, List<int> ids)
+    {
+        var result = new Dictionary<int, List<WorkItemComment>>();
+        var lockObj = new object();
+
+        var tasks = ids.Select(async id =>
+        {
+            await _throttle.WaitAsync();
+            try
+            {
+                var comments = await GetWorkItemCommentsAsync(project, id);
+                if (comments.Count > 0)
+                    lock (lockObj) { result[id] = comments; }
+            }
+            finally { _throttle.Release(); }
+        });
+
+        await Task.WhenAll(tasks);
+        return result;
+    }
+
+    private async Task<List<WorkItemComment>> GetWorkItemCommentsAsync(string project, int id)
+    {
+        var comments = new List<WorkItemComment>();
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            // Comments API requires preview version
+            var url = $"{encodedProject}/_apis/wit/workitems/{id}/comments?api-version=7.1-preview.3";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return comments;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("comments", out var arr)) return comments;
+
+            foreach (var c in arr.EnumerateArray())
+            {
+                var text = c.TryGetProperty("text", out var t) ? StripHtml(t.GetString() ?? "") : "";
+                var createdBy = "";
+                if (c.TryGetProperty("createdBy", out var by))
+                    createdBy = by.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "";
+                var createdDate = DateTime.MinValue;
+                if (c.TryGetProperty("createdDate", out var cd) &&
+                    DateTime.TryParse(cd.GetString(), out var dt))
+                    createdDate = dt.ToLocalTime();
+
+                if (!string.IsNullOrWhiteSpace(text))
+                    comments.Add(new WorkItemComment
+                    {
+                        WorkItemId = id,
+                        Text = text,
+                        CreatedBy = createdBy,
+                        CreatedDate = createdDate
+                    });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching comments for work item {Id}", id);
+        }
+        return comments;
+    }
+
+    private static string StripHtml(string html)
+    {
+        if (string.IsNullOrEmpty(html)) return "";
+        // Remove tags, decode common entities
+        var result = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+        result = result.Replace("&nbsp;", " ").Replace("&amp;", "&")
+                       .Replace("&lt;", "<").Replace("&gt;", ">")
+                       .Replace("&quot;", "\"").Replace("&#39;", "'");
+        return System.Text.RegularExpressions.Regex.Replace(result, @"\s{2,}", " ").Trim();
+    }
+
     private List<MemberDailyEfficiency> AggregateByMemberAndDate(
         List<WorkItemFieldDelta> allDeltas,
-        List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork)> workItems,
-        DateTime targetDate)
+        List<(int Id, string Title, string AssignedTo, double CompletedWork, double RemainingWork, double OriginalEstimate)> workItems,
+        DateTime targetDate,
+        Dictionary<int, List<WorkItemComment>> allComments)
     {
+        // Build per-member task list
+        var memberTasks = workItems
+            .GroupBy(w => w.AssignedTo)
+            .ToDictionary(g => g.Key, g => g.Select(w => new TaskSummary
+            {
+                WorkItemId = w.Id,
+                Title = w.Title,
+                OriginalEstimate = w.OriginalEstimate,
+                CompletedWork = w.CompletedWork,
+                RemainingWork = w.RemainingWork
+            }).OrderBy(t => t.WorkItemId).ToList());
+
         // Get all unique members from work items (even those with no updates)
         var memberCurrentTotals = workItems
             .GroupBy(w => w.AssignedTo)
@@ -399,7 +495,8 @@ public class TfsEfficiencyService
             {
                 MemberName = member,
                 TotalCompleted = Math.Round(memberCurrentTotals[member].TotalCompleted, 2),
-                TotalRemaining = Math.Round(memberCurrentTotals[member].TotalRemaining, 2)
+                TotalRemaining = Math.Round(memberCurrentTotals[member].TotalRemaining, 2),
+                Tasks = memberTasks.TryGetValue(member, out var tasks) ? tasks : new()
             };
 
             if (deltasByMember.TryGetValue(member, out var memberDeltas))
@@ -417,13 +514,31 @@ public class TfsEfficiencyService
                 efficiency.DayHistory = memberDeltas
                     .GroupBy(d => d.RevisedDate.Date)
                     .OrderByDescending(g => g.Key)
-                    .Select(g => new DayWiseBreakdown
+                    .Select(g =>
                     {
-                        Date = g.Key,
-                        CompletedDelta = Math.Round(g.Sum(d => d.CompletedWorkDelta), 2),
-                        RemainingDelta = Math.Round(g.Sum(d => d.RemainingWorkDelta), 2),
-                        WorkItemsUpdated = g.Select(d => d.WorkItemId).Distinct().Count(),
-                        Details = g.ToList()
+                        var dayWorkItemIds = g.Select(d => d.WorkItemId).Distinct().ToList();
+                        var commentsByWi = new Dictionary<int, List<WorkItemComment>>();
+                        foreach (var wiId in dayWorkItemIds)
+                        {
+                            if (allComments.TryGetValue(wiId, out var wiComments))
+                            {
+                                var dayComments = wiComments
+                                    .Where(c => c.CreatedDate.Date == g.Key)
+                                    .OrderBy(c => c.CreatedDate)
+                                    .ToList();
+                                if (dayComments.Count > 0)
+                                    commentsByWi[wiId] = dayComments;
+                            }
+                        }
+                        return new DayWiseBreakdown
+                        {
+                            Date = g.Key,
+                            CompletedDelta = Math.Round(g.Sum(d => d.CompletedWorkDelta), 2),
+                            RemainingDelta = Math.Round(g.Sum(d => d.RemainingWorkDelta), 2),
+                            WorkItemsUpdated = dayWorkItemIds.Count,
+                            Details = g.ToList(),
+                            CommentsByWorkItem = commentsByWi
+                        };
                     })
                     .ToList();
             }

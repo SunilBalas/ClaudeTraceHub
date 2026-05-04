@@ -291,8 +291,96 @@ else
                         <MudTableSortLabel SortBy="new Func<MemberAdoptionStats, object>(x => x.HoursSaved)" InitialDirection="SortDirection.Descending">Hrs Saved</MudTableSortLabel>
                     </MudTh>
                 </HeaderContent>
+                <ChildRowContent>
+                    @if (_expandedAdoptionMember == context.MemberName)
+                    {
+                        var memberTasks = _bundle.RawWorkItems
+                            .Where(t => t.AssignedTo == context.MemberName)
+                            .OrderBy(t => t.IsAiTask ? 0 : 1)
+                            .ThenBy(t => t.Id)
+                            .ToList();
+                        <MudTr>
+                            <td colspan="13" class="pa-0">
+                                <div class="ma-2">
+                                    <MudText Typo="Typo.caption" Color="Color.Primary"
+                                             Style="font-weight:600; text-transform:uppercase; letter-spacing:0.05em; padding-left:4px;">
+                                        Tasks (@memberTasks.Count)
+                                    </MudText>
+                                    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="mt-1"
+                                                    Style="background: var(--mud-palette-background-grey); font-size:0.82rem;">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:70px;">ID</th>
+                                                <th>Task Title</th>
+                                                <th style="width:80px; text-align:center;">Type</th>
+                                                <th style="text-align:right; width:110px;">Org. Estimate</th>
+                                                <th style="text-align:right; width:110px;">Completed</th>
+                                                <th style="text-align:right; width:110px;">Remaining</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @{
+                                                var tOrig = memberTasks.Sum(t => t.EffectiveEstimate);
+                                                var tComp = memberTasks.Sum(t => t.CompletedWork);
+                                                var tRem  = memberTasks.Sum(t => t.RemainingWork);
+                                            }
+                                            @foreach (var task in memberTasks)
+                                            {
+                                                <tr>
+                                                    <td>@task.Id</td>
+                                                    <td style="max-width:360px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                        title="@task.Title">@task.Title</td>
+                                                    <td style="text-align:center;">
+                                                        @if (task.IsAiTask)
+                                                        {
+                                                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled"
+                                                                     Style="height:18px; font-size:0.7rem;">AI</MudChip>
+                                                        }
+                                                        else
+                                                        {
+                                                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined"
+                                                                     Style="height:18px; font-size:0.7rem;">Manual</MudChip>
+                                                        }
+                                                    </td>
+                                                    <td style="text-align:right;">
+                                                        @(task.EffectiveEstimate > 0 ? $"{task.EffectiveEstimate:F1}h" : "-")
+                                                        @if (task.HasChangeInScope)
+                                                        {
+                                                            <MudTooltip Text="Change in Scope">
+                                                                <MudIcon Icon="@Icons.Material.Filled.ChangeCircle" Size="Size.Small"
+                                                                         Color="Color.Warning" Style="vertical-align:middle; margin-left:2px;" />
+                                                            </MudTooltip>
+                                                        }
+                                                    </td>
+                                                    <td style="text-align:right; color: var(--mud-palette-success);">
+                                                        @(task.CompletedWork > 0 ? $"{task.CompletedWork:F1}h" : "-")
+                                                    </td>
+                                                    <td style="text-align:right; color: @(task.RemainingWork > 0 ? "var(--mud-palette-warning)" : "inherit");">
+                                                        @(task.RemainingWork > 0 ? $"{task.RemainingWork:F1}h" : "-")
+                                                    </td>
+                                                </tr>
+                                            }
+                                            <tr style="font-weight:600; border-top: 2px solid var(--mud-palette-divider);">
+                                                <td colspan="3">Totals</td>
+                                                <td style="text-align:right;">@(tOrig > 0 ? $"{tOrig:F1}h" : "-")</td>
+                                                <td style="text-align:right; color: var(--mud-palette-success);">@(tComp > 0 ? $"{tComp:F1}h" : "-")</td>
+                                                <td style="text-align:right; color: var(--mud-palette-warning);">@(tRem > 0 ? $"{tRem:F1}h" : "-")</td>
+                                            </tr>
+                                        </tbody>
+                                    </MudSimpleTable>
+                                </div>
+                            </td>
+                        </MudTr>
+                    }
+                </ChildRowContent>
                 <RowTemplate>
-                    <MudTd DataLabel="Member"><strong>@context.MemberName</strong></MudTd>
+                    <MudTd DataLabel="Member">
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                                   StartIcon="@(_expandedAdoptionMember == context.MemberName ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                   OnClick="@(() => ToggleAdoptionExpand(context.MemberName))">
+                            <strong>@context.MemberName</strong>
+                        </MudButton>
+                    </MudTd>
                     <MudTd DataLabel="Discipline">@context.Discipline</MudTd>
                     <MudTd DataLabel="Tasks">@context.TotalTasks</MudTd>
                     <MudTd DataLabel="Claude AI" Style="color: #4CAF50; font-weight: 600;">@context.ClaudeAiTasks</MudTd>
@@ -343,6 +431,7 @@ else
     private bool _loading;
     private bool _showFilters = true;
     private AdoptionDataBundle _bundle = new();
+    private string? _expandedAdoptionMember;
 
     // Team auto-detect
     private List<string> _teams = new();
@@ -458,6 +547,7 @@ else
         if (string.IsNullOrEmpty(_selectedProject)) return;
 
         _loading = true;
+        _expandedAdoptionMember = null;
         StateHasChanged();
 
         try
@@ -578,6 +668,11 @@ else
         return Task.FromResult(_areaPaths
             .Where(a => a.Contains(value, StringComparison.OrdinalIgnoreCase))
             .AsEnumerable());
+    }
+
+    private void ToggleAdoptionExpand(string memberName)
+    {
+        _expandedAdoptionMember = _expandedAdoptionMember == memberName ? null : memberName;
     }
 
     private static string TruncateIteration(string path)
