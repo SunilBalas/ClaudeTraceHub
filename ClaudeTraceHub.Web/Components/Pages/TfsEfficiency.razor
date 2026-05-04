@@ -85,6 +85,19 @@ else
                                Margin="Margin.Dense" DateFormat="yyyy-MM-dd"
                                Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
             </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedMember" ValueChanged="OnMemberChanged"
+                           Label="Member" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Clearable="true"
+                           Disabled="@(_bundle.MemberStats.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person">
+                    <MudSelectItem T="string" Value="@("")">All Members</MudSelectItem>
+                    @foreach (var m in _bundle.MemberStats.Select(x => x.MemberName).OrderBy(n => n))
+                    {
+                        <MudSelectItem T="string" Value="@m">@m</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
             <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
                            StartIcon="@(_loading ? "" : Icons.Material.Filled.Sync)"
@@ -123,35 +136,36 @@ else
     @* Summary Cards *@
     @if (_bundle.MemberStats.Count > 0 && !_loading)
     {
+        var filtered = FilteredMembers();
         <MudGrid Class="mb-4">
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
-                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Members</MudText>
-                    <MudText Typo="Typo.h4">@_bundle.MemberStats.Count</MudText>
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">@(string.IsNullOrEmpty(_selectedMember) ? "Total Members" : "Member")</MudText>
+                    <MudText Typo="Typo.h4">@filtered.Count</MudText>
                 </MudPaper>
             </MudItem>
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">Managed TFS</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Success">@_bundle.ManagedCount</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Success">@filtered.Count(m => m.ManagedTfs)</MudText>
                 </MudPaper>
             </MudItem>
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">Not Managed</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Error">@_bundle.NotManagedCount</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Error">@filtered.Count(m => !m.ManagedTfs)</MudText>
                 </MudPaper>
             </MudItem>
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Tasks</MudText>
-                    <MudText Typo="Typo.h4">@_bundle.TotalTasks</MudText>
+                    <MudText Typo="Typo.h4">@(string.IsNullOrEmpty(_selectedMember) ? _bundle.TotalTasks.ToString() : "-")</MudText>
                 </MudPaper>
             </MudItem>
         </MudGrid>
 
         @* Main Data Table *@
-        <MudTable Items="@_bundle.MemberStats" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+        <MudTable Items="@filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
                   Class="mb-4" Elevation="2" Style="border-radius: 12px;">
             <HeaderContent>
                 <MudTh><MudTableSortLabel SortBy="new Func<MemberDailyEfficiency, object>(x => x.MemberName)">Member</MudTableSortLabel></MudTh>
@@ -314,7 +328,7 @@ else
                                                                                 @FormatDelta(detail.CompletedWorkDelta)
                                                                             </span>
                                                                             <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                                                                (@detail.CompletedWorkOld &rarr; @detail.CompletedWorkNew)
+                                                                                (@detail.CompletedWorkOld.ToString("F2") &rarr; @detail.CompletedWorkNew.ToString("F2"))
                                                                             </MudText>
                                                                         }
                                                                         else
@@ -329,7 +343,7 @@ else
                                                                                 @FormatDelta(detail.RemainingWorkDelta)
                                                                             </span>
                                                                             <MudText Typo="Typo.caption" Color="Color.Tertiary">
-                                                                                (@detail.RemainingWorkOld &rarr; @detail.RemainingWorkNew)
+                                                                                (@detail.RemainingWorkOld.ToString("F2") &rarr; @detail.RemainingWorkNew.ToString("F2"))
                                                                             </MudText>
                                                                         }
                                                                         else
@@ -400,6 +414,7 @@ else
     private string _selectedProject = "";
     private string _selectedTeam = "";
     private string _currentIterationPath = "";
+    private string _selectedMember = "";
     private DateTime? _selectedDate = DateTime.Today;
     private bool _loading;
     private string? _expandedMember;
@@ -462,6 +477,7 @@ else
     {
         _selectedTeam = team;
         _currentIterationPath = "";
+        _selectedMember = "";
         _bundle = new();
 
         if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
@@ -490,6 +506,7 @@ else
     private async Task OnIterationChanged(string iteration)
     {
         _currentIterationPath = iteration;
+        _selectedMember = "";
         _bundle = new();
         await LoadData();
     }
@@ -530,6 +547,22 @@ else
         _expandedComments.Clear();
     }
 
+    private void OnMemberChanged(string member)
+    {
+        _selectedMember = member ?? "";
+        _expandedMember = null;
+        _expandedDay = null;
+    }
+
+    private List<MemberDailyEfficiency> FilteredMembers()
+    {
+        if (string.IsNullOrEmpty(_selectedMember))
+            return _bundle.MemberStats;
+        return _bundle.MemberStats
+            .Where(m => string.Equals(m.MemberName, _selectedMember, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
     private void ToggleDayExpand(string dayKey)
     {
         _expandedDay = _expandedDay == dayKey ? null : dayKey;
@@ -545,10 +578,10 @@ else
     {
         if (value == 0) return "-";
         var sign = value > 0 ? "+" : "";
-        return $"{sign}{value:F1}h";
+        return $"{sign}{value:F2}h";
     }
 
-    private static string FormatHours(double value) => value > 0 ? $"{value:F1}h" : "-";
+    private static string FormatHours(double value) => value > 0 ? $"{value:F2}h" : "-";
 
     private static MarkupString FormatComment(string text)
     {
