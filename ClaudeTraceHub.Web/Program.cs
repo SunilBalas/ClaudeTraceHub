@@ -32,6 +32,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<DataRefreshService
 // User settings (layered on top of appsettings.json, reloads on save)
 builder.Configuration.AddJsonFile("usersettings.json", optional: true, reloadOnChange: true);
 builder.Services.AddSingleton<SettingsService>();
+builder.Services.AddSingleton<ClaudeAccountService>();
 
 // Azure DevOps integration
 builder.Services.Configure<AzureDevOpsSettings>(

@@ -193,10 +193,65 @@ else
                 </MudTd>
             </RowTemplate>
             <ChildRowContent>
-                @if (_expandedMember == context.MemberName && context.DayHistory.Count > 0)
+                @if (_expandedMember == context.MemberName)
                 {
                     <MudTr>
                         <td colspan="6" class="pa-0">
+                            @* Task summary table *@
+                            @if (context.Tasks.Count > 0)
+                            {
+                                <div class="ma-2 mb-1">
+                                    <MudText Typo="Typo.caption" Color="Color.Primary"
+                                             Style="font-weight:600; text-transform:uppercase; letter-spacing:0.05em; padding-left:4px;">
+                                        Tasks (@context.Tasks.Count)
+                                    </MudText>
+                                    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="mt-1"
+                                                    Style="background: var(--mud-palette-background-grey); font-size:0.82rem;">
+                                        <thead>
+                                            <tr>
+                                                <th style="width:70px;">ID</th>
+                                                <th>Task Title</th>
+                                                <th style="text-align:right; width:110px;">Org. Estimate</th>
+                                                <th style="text-align:right; width:110px;">Completed</th>
+                                                <th style="text-align:right; width:110px;">Remaining</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @{
+                                                var totalOrig = context.Tasks.Sum(t => t.OriginalEstimate);
+                                                var totalComp = context.Tasks.Sum(t => t.CompletedWork);
+                                                var totalRem  = context.Tasks.Sum(t => t.RemainingWork);
+                                            }
+                                            @foreach (var task in context.Tasks)
+                                            {
+                                                <tr>
+                                                    <td>@task.WorkItemId</td>
+                                                    <td style="max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                        title="@task.Title">@task.Title</td>
+                                                    <td style="text-align:right;">
+                                                        @(task.OriginalEstimate > 0 ? $"{task.OriginalEstimate:F1}h" : "-")
+                                                    </td>
+                                                    <td style="text-align:right; color: var(--mud-palette-success);">
+                                                        @(task.CompletedWork > 0 ? $"{task.CompletedWork:F1}h" : "-")
+                                                    </td>
+                                                    <td style="text-align:right; color: @(task.RemainingWork > 0 ? "var(--mud-palette-warning)" : "inherit");">
+                                                        @(task.RemainingWork > 0 ? $"{task.RemainingWork:F1}h" : "-")
+                                                    </td>
+                                                </tr>
+                                            }
+                                            <tr style="font-weight:600; border-top: 2px solid var(--mud-palette-divider);">
+                                                <td colspan="2">Totals</td>
+                                                <td style="text-align:right;">@(totalOrig > 0 ? $"{totalOrig:F1}h" : "-")</td>
+                                                <td style="text-align:right; color: var(--mud-palette-success);">@(totalComp > 0 ? $"{totalComp:F1}h" : "-")</td>
+                                                <td style="text-align:right; color: var(--mud-palette-warning);">@(totalRem > 0 ? $"{totalRem:F1}h" : "-")</td>
+                                            </tr>
+                                        </tbody>
+                                    </MudSimpleTable>
+                                </div>
+                            }
+                            @* Day history *@
+                            @if (context.DayHistory.Count > 0)
+                            {
                             <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
                                             Style="background: var(--mud-palette-background-grey);">
                                 <thead>
@@ -243,6 +298,9 @@ else
                                                             </tr>
                                                         </thead>
                                                         <tbody>
+                                                            @{
+                                                                var seenWiIds = new HashSet<int>();
+                                                            }
                                                             @foreach (var detail in day.Details)
                                                             {
                                                                 <tr>
@@ -281,6 +339,38 @@ else
                                                                     </td>
                                                                     <td>@detail.ChangedBy</td>
                                                                 </tr>
+                                                                @* Show comments once per work item (not per delta row) *@
+                                                                @if (seenWiIds.Add(detail.WorkItemId) &&
+                                                                     day.CommentsByWorkItem.TryGetValue(detail.WorkItemId, out var wiComments))
+                                                                {
+                                                                    var commentKey = $"{dayKey}_{detail.WorkItemId}";
+                                                                    var commentsExpanded = _expandedComments.Contains(commentKey);
+                                                                    <tr style="cursor:pointer;" @onclick="@(() => ToggleComment(commentKey))" @onclick:stopPropagation="true">
+                                                                        <td colspan="5" style="padding: 0 0 6px 12px;">
+                                                                            <div style="border-left: 3px solid var(--mud-palette-primary); padding: 4px 8px; margin-top: 2px;">
+                                                                                <div style="display:flex; align-items:center; gap:4px;">
+                                                                                    <MudIcon Icon="@(commentsExpanded ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                                                             Size="Size.Small" Color="Color.Primary" />
+                                                                                    <MudText Typo="Typo.caption" Color="Color.Primary" Style="font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">
+                                                                                        @wiComments.Count comment@(wiComments.Count == 1 ? "" : "s")
+                                                                                    </MudText>
+                                                                                </div>
+                                                                                @if (commentsExpanded)
+                                                                                {
+                                                                                    @foreach (var comment in wiComments)
+                                                                                    {
+                                                                                        <div style="margin-top: 6px;">
+                                                                                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                                                                                @comment.CreatedBy &nbsp;&middot;&nbsp; @comment.CreatedDate.ToString("MMM d, h:mm tt")
+                                                                                            </MudText>
+                                                                                            <div style="font-size:0.85rem; word-break:break-word; margin-top:2px;">@FormatComment(comment.Text)</div>
+                                                                                        </div>
+                                                                                    }
+                                                                                }
+                                                                            </div>
+                                                                        </td>
+                                                                    </tr>
+                                                                }
                                                             }
                                                         </tbody>
                                                     </MudSimpleTable>
@@ -290,6 +380,7 @@ else
                                     }
                                 </tbody>
                             </MudSimpleTable>
+                            }
                         </td>
                     </MudTr>
                 }
@@ -313,6 +404,7 @@ else
     private bool _loading;
     private string? _expandedMember;
     private string? _expandedDay;
+    private HashSet<string> _expandedComments = new();
     private EfficiencyTrackerBundle _bundle = new();
 
     protected override async Task OnInitializedAsync()
@@ -435,11 +527,18 @@ else
     {
         _expandedMember = _expandedMember == memberName ? null : memberName;
         _expandedDay = null;
+        _expandedComments.Clear();
     }
 
     private void ToggleDayExpand(string dayKey)
     {
         _expandedDay = _expandedDay == dayKey ? null : dayKey;
+    }
+
+    private void ToggleComment(string key)
+    {
+        if (!_expandedComments.Add(key))
+            _expandedComments.Remove(key);
     }
 
     private static string FormatDelta(double value)
@@ -450,6 +549,77 @@ else
     }
 
     private static string FormatHours(double value) => value > 0 ? $"{value:F1}h" : "-";
+
+    private static MarkupString FormatComment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return new MarkupString(System.Net.WebUtility.HtmlEncode(text));
+
+        var sb = new System.Text.StringBuilder();
+        var remaining = text.Trim();
+
+        // Extract leading date: DD/MM/YYYY,
+        var dateMatch = System.Text.RegularExpressions.Regex.Match(remaining, @"^(\d{2}/\d{2}/\d{4}),?\s*");
+        string? dateStr = null;
+        if (dateMatch.Success)
+        {
+            dateStr = dateMatch.Groups[1].Value;
+            remaining = remaining[dateMatch.Length..];
+        }
+
+        // Extract "Total Hours: X.X" prefix
+        string? hoursStr = null;
+        var hoursPrefix = System.Text.RegularExpressions.Regex.Match(remaining, @"^Total Hours:\s*([\d.]+h?)\s*");
+        if (hoursPrefix.Success)
+        {
+            hoursStr = hoursPrefix.Groups[1].Value;
+            remaining = remaining[hoursPrefix.Length..];
+        }
+        else
+        {
+            // Extract trailing hours like " - 0.25"
+            var trailHours = System.Text.RegularExpressions.Regex.Match(remaining, @"\s*[-–]\s*([\d.]+)\s*$");
+            if (trailHours.Success)
+            {
+                hoursStr = trailHours.Groups[1].Value;
+                remaining = remaining[..trailHours.Index].Trim();
+            }
+        }
+
+        // Header row: date + hours badge
+        if (dateStr != null || hoursStr != null)
+        {
+            sb.Append("<div style='display:flex;align-items:center;gap:10px;margin-bottom:5px;flex-wrap:wrap;'>");
+            if (dateStr != null)
+                sb.Append($"<span style='font-weight:600;'>{System.Net.WebUtility.HtmlEncode(dateStr)}</span>");
+            if (hoursStr != null)
+            {
+                var h = hoursStr.EndsWith('h') ? hoursStr : hoursStr + "h";
+                sb.Append($"<span style='background:rgba(var(--mud-palette-success-rgb),0.15);color:var(--mud-palette-success);font-weight:600;padding:1px 7px;border-radius:10px;font-size:0.78rem;'>&#8987; {System.Net.WebUtility.HtmlEncode(h)}</span>");
+            }
+            sb.Append("</div>");
+        }
+
+        // Split remaining text into bullet points
+        var parts = System.Text.RegularExpressions.Regex.Split(remaining.Trim(), @"\.\s+(?=[A-Z])|\s+[—–]\s+")
+            .Select(p => p.Trim().TrimEnd('.'))
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+
+        if (parts.Count > 1)
+        {
+            sb.Append("<ul style='margin:0;padding-left:16px;'>");
+            foreach (var part in parts)
+                sb.Append($"<li style='margin-bottom:3px;'>{System.Net.WebUtility.HtmlEncode(part)}</li>");
+            sb.Append("</ul>");
+        }
+        else if (parts.Count == 1)
+        {
+            sb.Append(System.Net.WebUtility.HtmlEncode(parts[0]));
+        }
+
+        return new MarkupString(sb.ToString());
+    }
 
     private static string TruncateIteration(string path)
     {

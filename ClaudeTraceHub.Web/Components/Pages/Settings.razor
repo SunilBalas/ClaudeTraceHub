@@ -3,6 +3,7 @@
 @inject IOptionsSnapshot<AzureDevOpsSettings> CurrentSettings
 @inject AzureDevOpsService AzureDevOpsService
 @inject SettingsService SettingsService
+@inject ClaudeAccountService ClaudeAccountService
 @inject ISnackbar Snackbar
 @inject NavigationManager NavigationManager
 @using ClaudeTraceHub.Web.Models
@@ -31,6 +32,94 @@
 
     <MudPaper Elevation="2" Style="max-width: 720px; overflow: visible;">
         <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+            <MudTabPanel Text="Claude Account" Icon="@Icons.Material.Filled.AccountCircle">
+                @if (_accountLoading)
+                {
+                    <div class="d-flex align-center gap-3 pa-4">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" />
+                        <MudText Typo="Typo.body2" Color="Color.Secondary">Loading account info...</MudText>
+                    </div>
+                }
+                else if (!_account.IsLoggedIn)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Dense="true" Icon="@Icons.Material.Filled.Warning">
+                        No Claude account found. Make sure Claude Code is installed and you are logged in.
+                    </MudAlert>
+                }
+                else
+                {
+                    <MudText Typo="Typo.overline" Color="Color.Secondary" Class="mb-2" Style="letter-spacing:0.1em;">ACCOUNT</MudText>
+                    <MudSimpleTable Dense="true" Hover="false" Striped="false" Class="mb-5 account-info-table">
+                        <tbody>
+                            <tr>
+                                <td><MudText Typo="Typo.body2" Color="Color.Secondary">Auth method</MudText></td>
+                                <td><MudText Typo="Typo.body2">@_account.AuthMethod</MudText></td>
+                            </tr>
+                            @if (!string.IsNullOrEmpty(_account.Email))
+                            {
+                                <tr>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">Email</MudText></td>
+                                    <td><MudText Typo="Typo.body2">@_account.Email</MudText></td>
+                                </tr>
+                            }
+                            @if (!string.IsNullOrEmpty(_account.DisplayName))
+                            {
+                                <tr>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">Name</MudText></td>
+                                    <td><MudText Typo="Typo.body2">@_account.DisplayName</MudText></td>
+                                </tr>
+                            }
+                            @if (!string.IsNullOrEmpty(_account.OrganizationName))
+                            {
+                                <tr>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">Organization</MudText></td>
+                                    <td><MudText Typo="Typo.body2">@_account.OrganizationName</MudText></td>
+                                </tr>
+                            }
+                            <tr>
+                                <td><MudText Typo="Typo.body2" Color="Color.Secondary">Plan</MudText></td>
+                                <td>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" Class="ma-0">
+                                        @_account.Plan
+                                    </MudChip>
+                                </td>
+                            </tr>
+                            @if (!string.IsNullOrEmpty(_account.RateLimitTier))
+                            {
+                                <tr>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">Rate limit tier</MudText></td>
+                                    <td><MudText Typo="Typo.body2">@_account.RateLimitTier</MudText></td>
+                                </tr>
+                            }
+                            @if (_account.TokenExpiry.HasValue)
+                            {
+                                <tr>
+                                    <td><MudText Typo="Typo.body2" Color="Color.Secondary">Session expires</MudText></td>
+                                    <td>
+                                        <MudText Typo="Typo.body2" Color="@(_account.IsTokenExpired ? Color.Error : Color.Default)">
+                                            @_account.TokenExpiry.Value.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                                            @if (_account.IsTokenExpired)
+                                            {
+                                                <span> &mdash; Expired</span>
+                                            }
+                                        </MudText>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.Circle"
+                                 Size="Size.Small"
+                                 Color="@(_account.IsTokenExpired ? Color.Error : Color.Success)" />
+                        <MudText Typo="Typo.body2" Color="@(_account.IsTokenExpired ? Color.Error : Color.Success)">
+                            @(_account.IsTokenExpired ? "Session expired — re-login with Claude Code" : "Active session")
+                        </MudText>
+                    </div>
+                }
+            </MudTabPanel>
+
             <MudTabPanel Text="Azure DevOps" Icon="@Icons.Material.Filled.Cloud">
                 @* Required fields checklist *@
                 @if (_isFirstRun)
@@ -205,6 +294,9 @@
     private string? _orgError;
     private string? _patError;
 
+    private ClaudeAccountInfo _account = new();
+    private bool _accountLoading = true;
+
     private bool _hasUrl => !string.IsNullOrWhiteSpace(_organizationUrl);
     private bool _hasPat => !string.IsNullOrWhiteSpace(_personalAccessToken);
     private bool _hasProjects => _selectedProjects.Any();
@@ -225,9 +317,14 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && !_isFirstRun && _hasUrl && _hasPat)
+        if (firstRender)
         {
-            await VerifyUrl();
+            _account = await ClaudeAccountService.GetAccountInfoAsync();
+            _accountLoading = false;
+            StateHasChanged();
+
+            if (!_isFirstRun && _hasUrl && _hasPat)
+                await VerifyUrl();
         }
     }
 
