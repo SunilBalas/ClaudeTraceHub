@@ -29,7 +29,7 @@ scripts\clean.bat        # dotnet clean
 `scripts/build.bat`, `clean.bat`, `restore.bat`, `run.bat` all set:
 
 ```
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\9.0.314\Sdks
+set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\9.0.313\Sdks
 ```
 
 If a build fails with "SDK not found", check the actual installed version under
