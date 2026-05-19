@@ -51,7 +51,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 | Component          | Technology                     | Version  |
 |--------------------|--------------------------------|----------|
-| Runtime            | .NET 9.0                       | 9.0.313  |
+| Runtime            | .NET 9.0                       | 9.0.314  |
 | Web Framework      | Blazor Server (Interactive)    | -        |
 | UI Components      | MudBlazor                      | 8.15.0   |
 | Excel Export       | ClosedXML                      | 0.105.0  |
@@ -62,7 +62,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 ## 3. Prerequisites
 
-- **.NET 9 SDK** (9.0.313 or compatible) - [download](https://dot.net/download)
+- **.NET 9 SDK** (9.0.314 or compatible) - [download](https://dot.net/download)
 - **Claude Code CLI** installed and used (generates `~/.claude/projects/` data)
 - **Azure DevOps / TFS** instance (optional, for work item integration)
 
@@ -873,7 +873,7 @@ The auto command analyzes commits since the last `v*` tag using PowerShell for r
 ## 14. Build & Deployment Scripts
 
 ### scripts/build.bat
-Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\9.0.313\Sdks` to ensure the .NET 9 SDK is used.
+Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\9.0.314\Sdks` to ensure the .NET 9 SDK is used.
 
 ### scripts/clean.bat
 Cleans build artifacts (`dotnet clean`).
