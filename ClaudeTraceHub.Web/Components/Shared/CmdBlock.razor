@@ -1,0 +1,44 @@
+@inject IJSRuntime JS
+@inject ISnackbar Snackbar
+
+<div class="cmd-block cmd-@Variant my-2">
+    <code class="cmd-text">@Command</code>
+    <MudTooltip Text="@(_copied ? "Copied!" : "Copy to clipboard")">
+        <MudIconButton Icon="@(_copied ? Icons.Material.Filled.Check : Icons.Material.Filled.ContentCopy)"
+                       Size="Size.Small"
+                       Color="@(_copied ? Color.Success : Color.Primary)"
+                       OnClick="Copy" />
+    </MudTooltip>
+</div>
+
+@code {
+    [Parameter] public string Command { get; set; } = "";
+    [Parameter] public string Variant { get; set; } = "default";
+
+    private bool _copied;
+
+    private async Task Copy()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("copyToClipboard", Command);
+            _copied = true;
+            Snackbar.Add($"Copied: {Truncate(Command, 60)}", Severity.Success,
+                config => config.VisibleStateDuration = 1200);
+            StateHasChanged();
+            await Task.Delay(1300);
+            _copied = false;
+            StateHasChanged();
+        }
+        catch
+        {
+            Snackbar.Add("Copy failed", Severity.Warning);
+        }
+    }
+
+    private static string Truncate(string text, int max)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= max) return text;
+        return text[..max] + "…";
+    }
+}

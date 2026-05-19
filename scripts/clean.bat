@@ -1,6 +1,6 @@
 @echo off
 echo Cleaning ClaudeTraceHub solution...
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\9.0.313\Sdks
+set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\9.0.314\Sdks
 cd /d "%~dp0.."
 dotnet clean ClaudeTraceHub.sln
 echo Cleaned ClaudeTraceHub solution
