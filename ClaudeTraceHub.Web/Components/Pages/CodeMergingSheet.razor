@@ -143,10 +143,18 @@ else
                     </MudSelect>
                 </MudItem>
                 <MudItem xs="12" sm="6" md="4">
-                    <MudTextField @bind-Value="_targetBranch" Label="Target Branch (for merge verification)"
-                                  Variant="Variant.Outlined" Margin="Margin.Dense"
-                                  Placeholder="e.g. main, release/prod"
-                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CallMerge" />
+                    <MudAutocomplete T="string" Value="_targetBranch"
+                                     ValueChanged="OnTargetBranchChanged"
+                                     SearchFunc="SearchBranches"
+                                     Label="Target Branch (for merge verification)"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense"
+                                     Placeholder="Search branch… e.g. main, release/prod"
+                                     Clearable="true" Dense="true" MaxItems="50"
+                                     CoerceText="true" CoerceValue="true"
+                                     ResetValueOnEmptyText="false"
+                                     ShowProgressIndicator="true"
+                                     Adornment="Adornment.Start"
+                                     AdornmentIcon="@Icons.Material.Filled.CallMerge" />
                 </MudItem>
                 <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
                     <MudButton Variant="Variant.Outlined" Color="Color.Secondary" Size="Size.Small"
@@ -161,7 +169,7 @@ else
                         }
                         else
                         {
-                            <text>Verify Merge</text>
+                            <text>Verify All</text>
                         }
                     </MudButton>
                 </MudItem>
@@ -228,210 +236,342 @@ else
             </MudItem>
         </MudGrid>
 
-        @* Main Data Table *@
-        <MudTable Items="@filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
-                  Class="mb-4" Elevation="2" Style="border-radius: 12px;">
-            <HeaderContent>
-                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.WorkItemId)">ID</MudTableSortLabel></MudTh>
-                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.Title)">Title</MudTableSortLabel></MudTh>
-                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.WorkItemType)">Type</MudTableSortLabel></MudTh>
-                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.State)">State</MudTableSortLabel></MudTh>
-                <MudTh><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.AssignedTo)">Assigned To</MudTableSortLabel></MudTh>
-                <MudTh Style="text-align:center"><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.TotalPRs)">PRs</MudTableSortLabel></MudTh>
-                <MudTh Style="text-align:center"><MudTableSortLabel SortBy="new Func<RequirementMergingRow, object>(x => x.TotalCommits)">Commits</MudTableSortLabel></MudTh>
+        @* Main Data Grid — resizable, reorderable, with Excel-style multi-select filters per column.
+           Click a row to auto-refresh its merge status against the target branch. *@
+        @* Per-column sort/filter icons are intentionally disabled so headers stay text-only and
+           column widths size to their data — keeping requirement/bug/CR titles fully readable.
+           Columns remain manually resizable; use the Member filter above the grid to narrow rows. *@
+        <MudDataGrid T="RequirementMergingRow" Items="@filtered"
+                     Dense="true" Hover="true" Bordered="false"
+                     ColumnResizeMode="ResizeMode.Column"
+                     DragDropColumnReordering="false"
+                     Filterable="false"
+                     SortMode="SortMode.None"
+                     Hideable="false"
+                     Groupable="false"
+                     ShowColumnOptions="false"
+                     ShowMenuIcon="false"
+                     RowsPerPage="100"
+                     RowClick="OnRowClick"
+                     Class="merging-grid mb-4" Elevation="2" Style="border-radius: 12px;">
+            <ToolBarContent>
+                <MudText Typo="Typo.subtitle1" Class="d-flex align-center gap-1">
+                    <MudIcon Icon="@Icons.Material.Filled.TableRows" Size="Size.Small" />
+                    Requirements
+                </MudText>
+                <MudSpacer />
+                <MudTooltip Text="Order requirements by the date/time of their earliest commit (oldest first). Items without commits move to the end.">
+                    <MudCheckBox T="bool" @bind-Value="_orderByFirstCommit"
+                                 Label="Commit-wise" Color="Color.Primary"
+                                 Dense="true" Size="Size.Small" Class="mr-2" />
+                </MudTooltip>
                 @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
                 {
-                    <MudTh Style="text-align:center">Merged?</MudTh>
+                    <MudTooltip Text="Click any row to refresh its merge status against the target branch.">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Info"
+                                 Icon="@Icons.Material.Filled.AutoMode">
+                            Auto-refresh on row click
+                        </MudChip>
+                    </MudTooltip>
                 }
-            </HeaderContent>
-            <RowTemplate>
-                <MudTd DataLabel="ID">
-                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
-                               StartIcon="@(_expandedReq == context.WorkItemId ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
-                               OnClick="@(() => ToggleReqExpand(context.WorkItemId))"
-                               Disabled="@(context.TotalPRs == 0)">
-                        <b>@context.WorkItemId</b>
-                    </MudButton>
-                </MudTd>
-                <MudTd DataLabel="Title">
-                    <span style="max-width:350px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;"
-                          title="@context.Title">@context.Title</span>
-                </MudTd>
-                <MudTd DataLabel="Type">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                             Color="@(context.WorkItemType == "Bug" ? Color.Error : Color.Info)">
-                        @context.WorkItemType
-                    </MudChip>
-                </MudTd>
-                <MudTd DataLabel="State">
-                    <MudChip T="string" Size="Size.Small"
-                             Color="@GetStateColor(context.State)">
-                        @context.State
-                    </MudChip>
-                </MudTd>
-                <MudTd DataLabel="Assigned To">@context.AssignedTo</MudTd>
-                <MudTd DataLabel="PRs" Style="text-align:center">
-                    @if (context.TotalPRs > 0)
-                    {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.TotalPRs</MudChip>
-                    }
-                    else
-                    {
-                        <MudText Color="Color.Tertiary">0</MudText>
-                    }
-                </MudTd>
-                <MudTd DataLabel="Commits" Style="text-align:center">
-                    @if (context.TotalCommits > 0)
-                    {
-                        <MudText Color="Color.Info">@context.TotalCommits</MudText>
-                    }
-                    else
-                    {
-                        <MudText Color="Color.Tertiary">-</MudText>
-                    }
-                </MudTd>
-                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
-                {
-                    <MudTd DataLabel="Merged?" Style="text-align:center">
-                        @if (context.HasAllPRsMergedToTarget == true)
+            </ToolBarContent>
+            <Columns>
+                <HierarchyColumn T="RequirementMergingRow"
+                                 ButtonDisabledFunc="@(x => x.TotalPRs == 0)" />
+                <PropertyColumn Property="x => x.WorkItemId" Title="ID" Sortable="false" Resizable="true"
+                                HeaderClass="col-id">
+                    <HeaderTemplate>
+                        <ColumnFilterHeader Title="ID" Mode="ColumnFilterHeader.ColumnFilterMode.Text"
+                                            TextValue="@_idFilter" TextValueChanged="@(v => _idFilter = v)"
+                                            OnChanged="OnFilterChanged" />
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        @if (!string.IsNullOrEmpty(context.Item.WorkItemUrl))
                         {
-                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            <MudLink Href="@context.Item.WorkItemUrl" Target="_blank" Color="Color.Primary"
+                                     Typo="Typo.body2" @onclick:stopPropagation="true">
+                                <b>@context.Item.WorkItemId</b>
+                            </MudLink>
                         }
-                        else if (context.HasAllPRsMergedToTarget == false)
+                        else
                         {
-                            <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                            <b>@context.Item.WorkItemId</b>
+                        }
+                        @if (_verifyingReqIds.Contains(context.Item.WorkItemId))
+                        {
+                            <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="ml-1" />
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.Title" Title="Title" Sortable="false" Resizable="true"
+                                HeaderClass="col-title" CellClass="col-title-body">
+                    <HeaderTemplate>
+                        <ColumnFilterHeader Title="Title" Mode="ColumnFilterHeader.ColumnFilterMode.Text"
+                                            TextValue="@_titleFilter" TextValueChanged="@(v => _titleFilter = v)"
+                                            OnChanged="OnFilterChanged" />
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <span class="merging-grid-title-cell" title="@context.Item.Title">@context.Item.Title</span>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.WorkItemType" Title="Type" Sortable="false" Resizable="true"
+                                HeaderClass="col-type">
+                    <HeaderTemplate>
+                        <ColumnFilterHeader Title="Type" Options="@AllTypes" Selected="_typeFilter"
+                                            OnChanged="OnFilterChanged" />
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                 Color="@GetWorkItemTypeColor(context.Item.WorkItemType)">
+                            @context.Item.WorkItemType
+                        </MudChip>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.State" Title="State" Sortable="false" Resizable="true"
+                                HeaderClass="col-state">
+                    <HeaderTemplate>
+                        <ColumnFilterHeader Title="State" Options="@AllStates" Selected="_stateFilter"
+                                            OnChanged="OnFilterChanged" />
+                    </HeaderTemplate>
+                    <CellTemplate>
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@GetStateColor(context.Item.State)">
+                            @context.Item.State
+                        </MudChip>
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.AssignedTo" Title="Assigned To" Sortable="false" Resizable="true"
+                                HeaderClass="col-assigned">
+                    <HeaderTemplate>
+                        <ColumnFilterHeader Title="Assigned To" Options="@AllAssignees" Selected="_assignedFilter"
+                                            OnChanged="OnFilterChanged" />
+                    </HeaderTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.TotalPRs" Title="PRs" Sortable="false" Resizable="true"
+                                HeaderClass="col-prs" CellStyle="text-align:center">
+                    <CellTemplate>
+                        @if (context.Item.TotalPRs > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Item.TotalPRs</MudChip>
+                        }
+                        else
+                        {
+                            <MudText Color="Color.Tertiary">0</MudText>
+                        }
+                    </CellTemplate>
+                </PropertyColumn>
+                <PropertyColumn Property="x => x.TotalCommits" Title="Commits" Sortable="false" Resizable="true"
+                                HeaderClass="col-commits" CellStyle="text-align:center">
+                    <CellTemplate>
+                        @if (context.Item.TotalCommits > 0)
+                        {
+                            <MudText Color="Color.Info">@context.Item.TotalCommits</MudText>
                         }
                         else
                         {
                             <MudText Color="Color.Tertiary">-</MudText>
                         }
-                    </MudTd>
-                }
-            </RowTemplate>
-            <ChildRowContent>
-                @if (_expandedReq == context.WorkItemId && context.PullRequests.Count > 0)
+                    </CellTemplate>
+                </PropertyColumn>
+                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
                 {
-                    <MudTr>
-                        <td colspan="@(_bundle.TargetBranchName != null ? 8 : 7)" class="pa-0">
-                            <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
-                                            Style="background: var(--mud-palette-background-grey);">
-                                <thead>
-                                    <tr>
-                                        <th style="width:40px"></th>
-                                        <th>PR ID</th>
-                                        <th>Repository</th>
-                                        <th>Source Branch</th>
-                                        <th>Target Branch</th>
-                                        <th>Status</th>
-                                        <th>Created By</th>
-                                        <th>Created</th>
-                                        <th style="text-align:center">Commits</th>
-                                        @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
-                                        {
-                                            <th style="text-align:center">Merged to @_bundle.TargetBranchName?</th>
-                                        }
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    @foreach (var pr in context.PullRequests)
+                    <TemplateColumn Title="Status"
+                                    Sortable="false" Resizable="true"
+                                    HeaderClass="col-merged"
+                                    CellStyle="text-align:center">
+                        <HeaderTemplate>
+                            <ColumnFilterHeader Title="Status" Options="@StatusOptions" Selected="_statusFilter"
+                                                OnChanged="OnFilterChanged" />
+                        </HeaderTemplate>
+                        <CellTemplate>
+                            @if (context.Item.HasAllPRsMergedToTarget == true)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                            }
+                            else if (context.Item.HasAllPRsMergedToTarget == false)
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                            }
+                            else
+                            {
+                                <MudText Color="Color.Tertiary">-</MudText>
+                            }
+                        </CellTemplate>
+                    </TemplateColumn>
+                }
+            </Columns>
+            <ChildRowContent>
+                @if (context.Item.PullRequests.Count > 0)
+                {
+                    <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
+                                    Style="background: var(--mud-palette-background-grey);">
+                        <thead>
+                            <tr>
+                                <th style="width:40px"></th>
+                                <th>PR ID</th>
+                                <th>Repository</th>
+                                <th>Source Branch</th>
+                                <th>Target Branch</th>
+                                <th>Status</th>
+                                <th>Created By</th>
+                                <th>Created</th>
+                                <th style="text-align:center">Commits</th>
+                                @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                {
+                                    <th style="text-align:center">Merged to @_bundle.TargetBranchName?</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var pr in context.Item.PullRequests)
+                            {
+                                var prKey = $"{context.Item.WorkItemId}_{pr.PullRequestId}";
+                                <tr style="cursor:pointer;" @onclick="@(() => TogglePrExpand(prKey))">
+                                    <td>
+                                        <MudIcon Icon="@(_expandedPR == prKey ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                                                 Size="Size.Small" />
+                                    </td>
+                                    <td>
+                                        <MudLink Href="@pr.PullRequestUrl" Target="_blank" Color="Color.Primary">
+                                            @pr.PullRequestId
+                                        </MudLink>
+                                    </td>
+                                    <td>@pr.RepositoryName</td>
+                                    <td title="@pr.SourceBranch" style="min-width:280px;">
+                                        <div class="d-flex align-center gap-1" @onclick:stopPropagation="true">
+                                            <code style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;">@pr.SourceBranch</code>
+                                            <MudTooltip Text="Copy branch name">
+                                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                               Size="Size.Small" Color="Color.Default"
+                                                               OnClick="@(() => CopyToClipboard(pr.SourceBranch))" />
+                                            </MudTooltip>
+                                        </div>
+                                    </td>
+                                    <td><code>@pr.TargetBranch</code></td>
+                                    <td>
+                                        <MudChip T="string" Size="Size.Small"
+                                                 Color="@GetPrStatusColor(pr.Status)">
+                                            @pr.Status
+                                        </MudChip>
+                                    </td>
+                                    <td>@pr.CreatedBy</td>
+                                    <td>@pr.CreationDate.ToString("yyyy-MM-dd")</td>
+                                    <td style="text-align:center">@pr.Commits.Count</td>
+                                    @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
                                     {
-                                        var prKey = $"{context.WorkItemId}_{pr.PullRequestId}";
-                                        <tr style="cursor:pointer;" @onclick="@(() => TogglePrExpand(prKey))">
-                                            <td>
-                                                <MudIcon Icon="@(_expandedPR == prKey ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
-                                                         Size="Size.Small" />
-                                            </td>
-                                            <td>
-                                                <MudLink Href="@pr.PullRequestUrl" Target="_blank" Color="Color.Primary">
-                                                    @pr.PullRequestId
-                                                </MudLink>
-                                            </td>
-                                            <td>@pr.RepositoryName</td>
-                                            <td title="@pr.SourceBranch" style="min-width:280px;">
-                                                <div class="d-flex align-center gap-1" @onclick:stopPropagation="true">
-                                                    <code style="max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;">@pr.SourceBranch</code>
-                                                    <MudTooltip Text="Copy branch name">
-                                                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
-                                                                       Size="Size.Small" Color="Color.Default"
-                                                                       OnClick="@(() => CopyToClipboard(pr.SourceBranch))" />
-                                                    </MudTooltip>
-                                                </div>
-                                            </td>
-                                            <td><code>@pr.TargetBranch</code></td>
-                                            <td>
-                                                <MudChip T="string" Size="Size.Small"
-                                                         Color="@GetPrStatusColor(pr.Status)">
-                                                    @pr.Status
-                                                </MudChip>
-                                            </td>
-                                            <td>@pr.CreatedBy</td>
-                                            <td>@pr.CreationDate.ToString("yyyy-MM-dd")</td>
-                                            <td style="text-align:center">@pr.Commits.Count</td>
-                                            @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                        <td style="text-align:center">
+                                            @if (pr.IsMergedToTargetBranch == true)
                                             {
-                                                <td style="text-align:center">
-                                                    @if (pr.IsMergedToTargetBranch == true)
-                                                    {
-                                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
-                                                    }
-                                                    else if (pr.IsMergedToTargetBranch == false)
-                                                    {
-                                                        <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
-                                                    }
-                                                    else
-                                                    {
-                                                        <text>-</text>
-                                                    }
-                                                </td>
+                                                <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
                                             }
-                                        </tr>
-                                        @if (_expandedPR == prKey && pr.Commits.Count > 0)
-                                        {
-                                            <tr>
-                                                <td colspan="@(_bundle.TargetBranchName != null ? 10 : 9)" class="pa-0">
-                                                    <MudSimpleTable Dense="true" Bordered="true" Class="ml-6 my-1"
-                                                                    Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
-                                                        <thead>
-                                                            <tr>
-                                                                <th>Commit SHA</th>
-                                                                <th>Message</th>
-                                                                <th>Author</th>
-                                                                <th>Date</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            @foreach (var commit in pr.Commits)
-                                                            {
-                                                                <tr>
-                                                                    <td>
-                                                                        <div class="d-flex align-center gap-1">
-                                                                            <code title="@commit.CommitId">@commit.ShortId</code>
-                                                                            <MudTooltip Text="Copy full commit ID">
-                                                                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
-                                                                                               Size="Size.Small" Color="Color.Default"
-                                                                                               OnClick="@(() => CopyToClipboard(commit.CommitId))" />
-                                                                            </MudTooltip>
-                                                                        </div>
-                                                                    </td>
-                                                                    <td style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                                                                        title="@commit.Message">@commit.Message</td>
-                                                                    <td>@commit.Author</td>
-                                                                    <td>@commit.AuthorDate.ToString("yyyy-MM-dd HH:mm")</td>
-                                                                </tr>
-                                                            }
-                                                        </tbody>
-                                                    </MudSimpleTable>
-                                                </td>
-                                            </tr>
-                                        }
+                                            else if (pr.IsMergedToTargetBranch == false)
+                                            {
+                                                <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                                            }
+                                            else
+                                            {
+                                                <text>-</text>
+                                            }
+                                        </td>
                                     }
-                                </tbody>
-                            </MudSimpleTable>
-                        </td>
-                    </MudTr>
+                                </tr>
+                                @if (_expandedPR == prKey && pr.Commits.Count > 0)
+                                {
+                                    <tr>
+                                        <td colspan="@(_bundle.TargetBranchName != null ? 10 : 9)" class="pa-0">
+                                            <MudSimpleTable Dense="true" Bordered="true" Class="ml-6 my-1"
+                                                            Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Commit SHA</th>
+                                                        <th>Message</th>
+                                                        <th>Author</th>
+                                                        <th>Date</th>
+                                                        @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                                        {
+                                                            <th style="text-align:center">Merged?</th>
+                                                        }
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var commit in pr.Commits)
+                                                    {
+                                                        <tr>
+                                                            <td>
+                                                                <div class="d-flex align-center gap-1">
+                                                                    @if (!string.IsNullOrEmpty(commit.CommitUrl))
+                                                                    {
+                                                                        <MudLink Href="@commit.CommitUrl" Target="_blank" Color="Color.Primary"
+                                                                                 title="@commit.CommitId">
+                                                                            <code>@commit.ShortId</code>
+                                                                        </MudLink>
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <code title="@commit.CommitId">@commit.ShortId</code>
+                                                                    }
+                                                                    <MudTooltip Text="Copy full commit ID">
+                                                                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy"
+                                                                                       Size="Size.Small" Color="Color.Default"
+                                                                                       OnClick="@(() => CopyToClipboard(commit.CommitId))" />
+                                                                    </MudTooltip>
+                                                                </div>
+                                                            </td>
+                                                            <td style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                                                                title="@commit.Message">
+                                                                <div class="d-flex align-center gap-1">
+                                                                    @if (commit.IsMergeTrackingCommit)
+                                                                    {
+                                                                        <MudTooltip Text="Auto-generated merge commit — cannot be merged independently, so it's optional.">
+                                                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                                                     Color="Color.Default" Class="ma-0">Optional</MudChip>
+                                                                        </MudTooltip>
+                                                                    }
+                                                                    <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">@commit.Message</span>
+                                                                </div>
+                                                            </td>
+                                                            <td>@commit.Author</td>
+                                                            <td>@commit.AuthorDate.ToString("yyyy-MM-dd HH:mm")</td>
+                                                            @if (!string.IsNullOrEmpty(_bundle.TargetBranchName))
+                                                            {
+                                                                <td style="text-align:center">
+                                                                    @if (commit.IsMergeTrackingCommit)
+                                                                    {
+                                                                        <MudTooltip Text="Optional — not required on the target branch.">
+                                                                            <MudIcon Icon="@Icons.Material.Filled.RemoveCircleOutline"
+                                                                                     Color="Color.Default" Size="Size.Small" />
+                                                                        </MudTooltip>
+                                                                    }
+                                                                    else if (commit.IsMergedToTargetBranch == true)
+                                                                    {
+                                                                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" Size="Size.Small" />
+                                                                    }
+                                                                    else if (commit.IsMergedToTargetBranch == false)
+                                                                    {
+                                                                        <MudIcon Icon="@Icons.Material.Filled.Cancel" Color="Color.Error" Size="Size.Small" />
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        <text>-</text>
+                                                                    }
+                                                                </td>
+                                                            }
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </MudSimpleTable>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </MudSimpleTable>
                 }
             </ChildRowContent>
-        </MudTable>
+            <PagerContent>
+                <MudDataGridPager T="RequirementMergingRow" PageSizeOptions="@(new int[] { 100, 50, 25, 250, 500 })" />
+            </PagerContent>
+        </MudDataGrid>
     }
 
     </div>
@@ -451,11 +591,40 @@ else
     private string _targetBranch = "";
     private string _selectedMember = "";
     private bool _deliverableOnly = true;
+    private bool _orderByFirstCommit;
     private bool _loading;
     private bool _verifying;
-    private int? _expandedReq;
     private string? _expandedPR;
     private CodeMergingBundle _bundle = new();
+
+    private List<string> _availableBranches = new();
+    private bool _branchesLoading;
+    private readonly HashSet<int> _verifyingReqIds = new();
+
+    // --- Per-column header-click filters ---
+    private string _idFilter = "";
+    private string _titleFilter = "";
+    private readonly HashSet<string> _typeFilter = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _stateFilter = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _assignedFilter = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _statusFilter = new(StringComparer.OrdinalIgnoreCase);
+
+    private const string StatusMerged = "Merged";
+    private const string StatusNotMerged = "Not merged";
+    private const string StatusPending = "Pending";
+    private static readonly string[] StatusOptions = { StatusMerged, StatusNotMerged, StatusPending };
+
+    private IEnumerable<string> AllTypes => DistinctValues(r => r.WorkItemType);
+    private IEnumerable<string> AllStates => DistinctValues(r => r.State);
+    private IEnumerable<string> AllAssignees => DistinctValues(r => r.AssignedTo);
+
+    private IEnumerable<string> DistinctValues(Func<RequirementMergingRow, string> selector) =>
+        _bundle.Requirements.Select(selector)
+            .Where(v => !string.IsNullOrEmpty(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(v => v, StringComparer.OrdinalIgnoreCase);
+
+    private const string TargetBranchStorageKey = "codeMerging.targetBranch";
 
     protected override async Task OnInitializedAsync()
     {
@@ -468,6 +637,24 @@ else
         {
             _selectedProject = _projects[0];
             await LoadTeamsAndAutoSelect();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var saved = await JSRuntime.InvokeAsync<string?>("localStorage.getItem", TargetBranchStorageKey);
+            if (!string.IsNullOrWhiteSpace(saved))
+            {
+                _targetBranch = saved;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // ignore — localStorage may be unavailable in non-browser context
         }
     }
 
@@ -571,16 +758,27 @@ else
         if (string.IsNullOrEmpty(_currentIterationPath)) return;
 
         _loading = true;
-        _expandedReq = null;
         _expandedPR = null;
+        _verifyingReqIds.Clear();
+        ClearColumnFilters();
         StateHasChanged();
 
         try
         {
-            var repoNames = _selectedRepos?.ToList();
-            _bundle = await MergingService.GetMergingDataAsync(
+            var repoNames = _selectedRepos?.ToList() ?? new List<string>();
+            var bundleTask = MergingService.GetMergingDataAsync(
                 _selectedProject, _selectedTeam, _currentIterationPath,
                 repoNames, _deliverableOnly, GetRepoTargetBranchFilters());
+
+            // Kick off branch fetch in parallel so the dropdown is ready as soon as data loads.
+            _branchesLoading = true;
+            var branchesTask = MergingService.GetBranchesAsync(_selectedProject, repoNames);
+
+            await Task.WhenAll(bundleTask, branchesTask);
+
+            _bundle = bundleTask.Result;
+            _availableBranches = branchesTask.Result;
+            _branchesLoading = false;
 
             if (!string.IsNullOrEmpty(_bundle.ErrorMessage))
                 Snackbar.Add(_bundle.ErrorMessage, Severity.Warning);
@@ -593,6 +791,7 @@ else
         finally
         {
             _loading = false;
+            _branchesLoading = false;
             StateHasChanged();
         }
     }
@@ -620,32 +819,145 @@ else
         }
     }
 
-    private void ToggleReqExpand(int reqId)
-    {
-        _expandedReq = _expandedReq == reqId ? null : reqId;
-        _expandedPR = null;
-    }
-
     private void OnMemberChanged(string member)
     {
         _selectedMember = member ?? "";
-        _expandedReq = null;
         _expandedPR = null;
+    }
+
+    private Task<IEnumerable<string>> SearchBranches(string? value, CancellationToken ct)
+    {
+        if (_availableBranches.Count == 0)
+            return Task.FromResult(Enumerable.Empty<string>());
+
+        if (string.IsNullOrWhiteSpace(value))
+            return Task.FromResult(_availableBranches.Take(50));
+
+        var lower = value.Trim();
+        return Task.FromResult(_availableBranches
+            .Where(b => b.Contains(lower, StringComparison.OrdinalIgnoreCase))
+            .Take(50));
+    }
+
+    private async Task OnTargetBranchChanged(string? branch)
+    {
+        _targetBranch = branch ?? "";
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", TargetBranchStorageKey, _targetBranch);
+        }
+        catch { /* ignore */ }
+
+        if (string.IsNullOrEmpty(_targetBranch))
+        {
+            // Clear prior verification state so the "Merged?" column hides cleanly.
+            _bundle.TargetBranchName = null;
+            foreach (var pr in _bundle.Requirements.SelectMany(r => r.PullRequests))
+                pr.IsMergedToTargetBranch = null;
+            _bundle.MergedToTargetCount = 0;
+            _bundle.NotMergedToTargetCount = 0;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnRowClick(DataGridRowClickEventArgs<RequirementMergingRow> args)
+    {
+        var req = args.Item;
+        if (req == null || req.TotalPRs == 0) return;
+        if (string.IsNullOrWhiteSpace(_targetBranch)) return;
+        if (_verifyingReqIds.Contains(req.WorkItemId)) return;
+
+        _verifyingReqIds.Add(req.WorkItemId);
+        StateHasChanged();
+        try
+        {
+            await MergingService.VerifyMergeForRequirementAsync(
+                _bundle, _selectedProject, _targetBranch, req.WorkItemId);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Refresh failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _verifyingReqIds.Remove(req.WorkItemId);
+            StateHasChanged();
+        }
     }
 
     private List<RequirementMergingRow> FilteredRequirements()
     {
-        if (string.IsNullOrEmpty(_selectedMember))
-            return _bundle.Requirements;
-        return _bundle.Requirements
-            .Where(r => string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        IEnumerable<RequirementMergingRow> query = _bundle.Requirements.Where(MatchesColumnFilters);
+
+        if (!string.IsNullOrEmpty(_selectedMember))
+            query = query.Where(r => string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase));
+
+        if (_orderByFirstCommit)
+        {
+            // Items without any commits go to the end so the timeline starts with real activity.
+            query = query
+                .OrderBy(r => r.FirstCommitDate == null)
+                .ThenBy(r => r.FirstCommitDate ?? DateTime.MaxValue)
+                .ThenBy(r => r.WorkItemId);
+        }
+
+        return query.ToList();
+    }
+
+    /// <summary>Applies all per-column header-click filters to a single row (AND across columns).</summary>
+    private bool MatchesColumnFilters(RequirementMergingRow r)
+    {
+        if (!string.IsNullOrWhiteSpace(_idFilter) &&
+            !r.WorkItemId.ToString().Contains(_idFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(_titleFilter) &&
+            !r.Title.Contains(_titleFilter.Trim(), StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (_typeFilter.Count > 0 && !_typeFilter.Contains(r.WorkItemType)) return false;
+        if (_stateFilter.Count > 0 && !_stateFilter.Contains(r.State)) return false;
+        if (_assignedFilter.Count > 0 && !_assignedFilter.Contains(r.AssignedTo)) return false;
+        if (_statusFilter.Count > 0 && !_statusFilter.Contains(StatusLabel(r))) return false;
+
+        return true;
+    }
+
+    private static string StatusLabel(RequirementMergingRow r) => r.HasAllPRsMergedToTarget switch
+    {
+        true => StatusMerged,
+        false => StatusNotMerged,
+        _ => StatusPending
+    };
+
+    private void OnFilterChanged()
+    {
+        _expandedPR = null;
+        StateHasChanged();
+    }
+
+    private void ClearColumnFilters()
+    {
+        _idFilter = "";
+        _titleFilter = "";
+        _typeFilter.Clear();
+        _stateFilter.Clear();
+        _assignedFilter.Clear();
+        _statusFilter.Clear();
     }
 
     private void TogglePrExpand(string prKey)
     {
         _expandedPR = _expandedPR == prKey ? null : prKey;
     }
+
+    private static Color GetWorkItemTypeColor(string type) => type switch
+    {
+        "Bug" => Color.Error,
+        "Change Request" => Color.Warning,
+        _ => Color.Info
+    };
 
     private static Color GetStateColor(string state) => state.ToLower() switch
     {
@@ -711,7 +1023,8 @@ else
             var hasVerification = !string.IsNullOrEmpty(_bundle.TargetBranchName);
             if (hasVerification)
             {
-                headers.Add($"Merged to {_bundle.TargetBranchName}?");
+                headers.Add($"PR Merged to {_bundle.TargetBranchName}?");
+                headers.Add($"Commit Merged to {_bundle.TargetBranchName}?");
             }
 
             for (int i = 0; i < headers.Count; i++)
@@ -762,7 +1075,10 @@ else
                             ColorTypeCell(ws.Cell(row, 3), req.WorkItemType);
                             ColorPrStatusCell(ws.Cell(row, 10), pr.Status);
                             if (hasVerification)
-                                ws.Cell(row, 17).Value = pr.IsMergedToTargetBranch == true ? "Yes" : pr.IsMergedToTargetBranch == false ? "No" : "-";
+                            {
+                                ws.Cell(row, 17).Value = PrMergedText(pr);
+                                ws.Cell(row, 18).Value = "-";
+                            }
                             row++;
                         }
                         else
@@ -789,7 +1105,10 @@ else
                                 ColorTypeCell(ws.Cell(row, 3), req.WorkItemType);
                                 ColorPrStatusCell(ws.Cell(row, 10), pr.Status);
                                 if (hasVerification)
-                                    ws.Cell(row, 17).Value = pr.IsMergedToTargetBranch == true ? "Yes" : pr.IsMergedToTargetBranch == false ? "No" : "-";
+                                {
+                                    ws.Cell(row, 17).Value = PrMergedText(pr);
+                                    ws.Cell(row, 18).Value = CommitMergedText(commit);
+                                }
                                 row++;
                             }
                         }
@@ -823,6 +1142,17 @@ else
         }
     }
 
+    private static string PrMergedText(PullRequestInfo pr) =>
+        pr.IsMergedToTargetBranch == true ? "Yes"
+        : pr.IsMergedToTargetBranch == false ? "No"
+        : "-";
+
+    private static string CommitMergedText(CommitInfo commit) =>
+        commit.IsMergeTrackingCommit ? "Optional"
+        : commit.IsMergedToTargetBranch == true ? "Yes"
+        : commit.IsMergedToTargetBranch == false ? "No"
+        : "-";
+
     private static void ColorStateCell(IXLCell cell, string state)
     {
         var (bg, fg) = state.ToLower() switch
@@ -842,16 +1172,14 @@ else
 
     private static void ColorTypeCell(IXLCell cell, string type)
     {
-        if (type.Equals("Bug", StringComparison.OrdinalIgnoreCase))
+        var bg = type switch
         {
-            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#c62828");
-            cell.Style.Font.FontColor = XLColor.White;
-        }
-        else
-        {
-            cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1565c0");
-            cell.Style.Font.FontColor = XLColor.White;
-        }
+            "Bug" => XLColor.FromHtml("#c62828"),
+            "Change Request" => XLColor.FromHtml("#ef6c00"),
+            _ => XLColor.FromHtml("#1565c0")
+        };
+        cell.Style.Fill.BackgroundColor = bg;
+        cell.Style.Font.FontColor = XLColor.White;
     }
 
     private static void ColorPrStatusCell(IXLCell cell, string status)

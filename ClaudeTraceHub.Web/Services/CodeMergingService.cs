@@ -146,11 +146,21 @@ public class CodeMergingService
                     foreach (var pr in prs)
                     {
                         pr.Commits = await FetchPrCommitsAsync(project, pr.RepositoryId, pr.PullRequestId);
+                        var orgUrl = _settings.OrganizationUrl.TrimEnd('/');
+                        foreach (var c in pr.Commits)
+                            c.CommitUrl = $"{orgUrl}/{Uri.EscapeDataString(project)}/_git/{Uri.EscapeDataString(pr.RepositoryName)}/commit/{c.CommitId}";
                     }
+
+                    // Order PRs by their first activity date (earliest commit, or creation date as fallback)
+                    // so the user sees PRs in the order work actually started on the requirement.
+                    var orderedPrs = prs
+                        .OrderBy(pr => pr.FirstActivityDate)
+                        .ThenBy(pr => pr.PullRequestId)
+                        .ToList();
 
                     lock (lockObj)
                     {
-                        req.PullRequests = prs;
+                        req.PullRequests = orderedPrs;
                     }
                 }
                 finally
@@ -211,31 +221,7 @@ public class CodeMergingService
             await _throttle.WaitAsync();
             try
             {
-                bool merged;
-
-                // If PR's target branch matches the verification target, it's already merged
-                if (pr.TargetBranch.Equals(targetBranch, StringComparison.OrdinalIgnoreCase) ||
-                    pr.TargetBranch.Equals($"refs/heads/{targetBranch}", StringComparison.OrdinalIgnoreCase))
-                {
-                    merged = true;
-                }
-                else if (pr.Commits.Count > 0 && targetBranchCommits.TryGetValue(pr.RepositoryId, out var targetMessages))
-                {
-                    // Check if PR commits exist on target branch by:
-                    // 1. Direct SHA match (normal merge)
-                    // 2. Commit message match (cherry-pick creates new SHA but same message)
-                    merged = pr.Commits.All(c =>
-                        targetMessages.Contains(c.CommitId) ||
-                        targetMessages.Contains(c.Message.Trim()));
-                }
-                else if (!string.IsNullOrEmpty(pr.LastMergeCommitId))
-                {
-                    merged = await CheckCommitOnBranchAsync(project, pr.RepositoryId, pr.LastMergeCommitId, targetBranch);
-                }
-                else
-                {
-                    merged = false;
-                }
+                var merged = await EvaluatePrMergeStatusAsync(pr, project, targetBranch, targetBranchCommits);
 
                 lock (lockObj)
                 {
@@ -251,6 +237,53 @@ public class CodeMergingService
         });
 
         await Task.WhenAll(tasks);
+    }
+
+    /// <summary>
+    /// Determines whether a PR is merged to the target branch and records the status of each
+    /// individual commit on <see cref="CommitInfo.IsMergedToTargetBranch"/>. READ-ONLY.
+    ///
+    /// A commit is considered present on the target when its SHA matches (normal merge) or its
+    /// message matches (cherry-picks create a new SHA but keep the message). Auto-generated
+    /// "Merge remote-tracking branch …" commits are optional: they don't block the PR's merged
+    /// state, so a PR counts as merged once every other commit is present — even if the
+    /// merge-tracking commit is absent.
+    /// </summary>
+    private async Task<bool> EvaluatePrMergeStatusAsync(
+        PullRequestInfo pr, string project, string targetBranch,
+        IReadOnlyDictionary<string, HashSet<string>> targetBranchCommits)
+    {
+        // PR already targets the verification branch → everything on it is merged by definition.
+        if (pr.TargetBranch.Equals(targetBranch, StringComparison.OrdinalIgnoreCase) ||
+            pr.TargetBranch.Equals($"refs/heads/{targetBranch}", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var c in pr.Commits) c.IsMergedToTargetBranch = true;
+            return true;
+        }
+
+        if (pr.Commits.Count > 0 && targetBranchCommits.TryGetValue(pr.RepositoryId, out var targetMessages))
+        {
+            var allRequiredMerged = true;
+            foreach (var c in pr.Commits)
+            {
+                var present = targetMessages.Contains(c.CommitId) ||
+                              targetMessages.Contains(c.Message.Trim());
+                c.IsMergedToTargetBranch = present;
+
+                if (!present && !c.IsMergeTrackingCommit)
+                    allRequiredMerged = false;
+            }
+            return allRequiredMerged;
+        }
+
+        bool merged;
+        if (!string.IsNullOrEmpty(pr.LastMergeCommitId))
+            merged = await CheckCommitOnBranchAsync(project, pr.RepositoryId, pr.LastMergeCommitId, targetBranch);
+        else
+            merged = false;
+
+        foreach (var c in pr.Commits) c.IsMergedToTargetBranch = merged;
+        return merged;
     }
 
     /// <summary>
@@ -293,6 +326,96 @@ public class CodeMergingService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Re-verify merge status for a single requirement's PRs. Used for live refresh on row expansion.
+    /// </summary>
+    public async Task VerifyMergeForRequirementAsync(
+        CodeMergingBundle bundle, string project, string targetBranch, int workItemId)
+    {
+        if (string.IsNullOrEmpty(targetBranch)) return;
+
+        bundle.TargetBranchName = targetBranch;
+        var req = bundle.Requirements.FirstOrDefault(r => r.WorkItemId == workItemId);
+        if (req == null) return;
+
+        var completedPrs = req.PullRequests.Where(pr => pr.Status == "completed").ToList();
+        var repoIds = completedPrs.Select(pr => pr.RepositoryId).Distinct().ToList();
+
+        var targetBranchCommits = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var repoId in repoIds)
+        {
+            targetBranchCommits[repoId] = await FetchBranchCommitMessagesAsync(project, repoId, targetBranch);
+        }
+
+        foreach (var pr in completedPrs)
+        {
+            pr.IsMergedToTargetBranch =
+                await EvaluatePrMergeStatusAsync(pr, project, targetBranch, targetBranchCommits);
+        }
+
+        var allCompleted = bundle.Requirements.SelectMany(r => r.PullRequests)
+            .Where(p => p.Status == "completed")
+            .ToList();
+        bundle.MergedToTargetCount = allCompleted.Count(p => p.IsMergedToTargetBranch == true);
+        bundle.NotMergedToTargetCount = allCompleted.Count(p => p.IsMergedToTargetBranch == false);
+    }
+
+    /// <summary>
+    /// Returns sorted, deduplicated branch names across the supplied repos (by name). READ-ONLY.
+    /// </summary>
+    public async Task<List<string>> GetBranchesAsync(string project, IEnumerable<string> repoNames)
+    {
+        var nameSet = repoNames?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new();
+        if (nameSet.Count == 0) return new List<string>();
+
+        var repos = await GetRepositoriesAsync(project);
+        var filteredRepos = repos.Where(r => nameSet.Contains(r.Name)).ToList();
+
+        var tasks = filteredRepos.Select(async r =>
+        {
+            await _throttle.WaitAsync();
+            try { return await FetchBranchesForRepoAsync(project, r.Id); }
+            finally { _throttle.Release(); }
+        });
+        var lists = await Task.WhenAll(tasks);
+
+        return lists.SelectMany(l => l)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(b => b, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task<List<string>> FetchBranchesForRepoAsync(string project, string repoId)
+    {
+        var branches = new List<string>();
+        try
+        {
+            var encodedProject = Uri.EscapeDataString(project);
+            var url = $"{encodedProject}/_apis/git/repositories/{repoId}/refs?" +
+                      $"filter=heads&$top=1000&api-version={ApiVersion}";
+            var response = await _httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return branches;
+
+            var json = await response.Content.ReadAsStringAsync();
+            var doc = JsonDocument.Parse(json);
+
+            if (doc.RootElement.TryGetProperty("value", out var values))
+            {
+                foreach (var v in values.EnumerateArray())
+                {
+                    var name = GetJsonString(v, "name").Replace("refs/heads/", "");
+                    if (!string.IsNullOrEmpty(name))
+                        branches.Add(name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error fetching branches for repo {RepoId}", repoId);
+        }
+        return branches;
     }
 
     /// <summary>
@@ -383,10 +506,11 @@ public class CodeMergingService
         var encodedProject = Uri.EscapeDataString(project);
         var url = $"{encodedProject}/_apis/wit/wiql?api-version={ApiVersion}";
 
-        // Bugs never have 'Deliverable' tag, so we query them separately and combine
+        // Bugs and Change Requests never need a 'Deliverable' tag — they're treated
+        // as always-relevant alongside tagged Requirements/User Stories/PBIs.
         var workItemTypeFilter = deliverableOnly
-            ? "([System.WorkItemType] IN ('Requirement', 'User Story', 'Product Backlog Item') AND [System.Tags] CONTAINS 'Deliverable') OR ([System.WorkItemType] = 'Bug')"
-            : "[System.WorkItemType] IN ('Requirement', 'User Story', 'Product Backlog Item', 'Bug')";
+            ? "([System.WorkItemType] IN ('Requirement', 'User Story', 'Product Backlog Item') AND [System.Tags] CONTAINS 'Deliverable') OR ([System.WorkItemType] IN ('Bug', 'Change Request'))"
+            : "[System.WorkItemType] IN ('Requirement', 'User Story', 'Product Backlog Item', 'Bug', 'Change Request')";
 
         var conditions = new List<string>
         {
@@ -436,6 +560,7 @@ public class CodeMergingService
     {
         var allItems = new List<RequirementMergingRow>();
         var fields = "System.Id,System.Title,System.State,System.AssignedTo,System.WorkItemType";
+        var orgUrl = _settings.OrganizationUrl.TrimEnd('/');
 
         const int batchSize = 200;
         for (var i = 0; i < ids.Count; i += batchSize)
@@ -461,13 +586,15 @@ public class CodeMergingService
                     foreach (var wi in valueArray.EnumerateArray())
                     {
                         var f = wi.GetProperty("fields");
+                        var id = GetIntField(f, "System.Id");
                         allItems.Add(new RequirementMergingRow
                         {
-                            WorkItemId = GetIntField(f, "System.Id"),
+                            WorkItemId = id,
                             Title = GetStringField(f, "System.Title"),
                             State = GetStringField(f, "System.State"),
                             AssignedTo = GetAssignedToName(f),
-                            WorkItemType = GetStringField(f, "System.WorkItemType")
+                            WorkItemType = GetStringField(f, "System.WorkItemType"),
+                            WorkItemUrl = $"{orgUrl}/{Uri.EscapeDataString(project)}/_workitems/edit/{id}"
                         });
                     }
                 }
@@ -838,7 +965,8 @@ public class CodeMergingService
             _logger.LogWarning(ex, "Error fetching commits for PR {PrId}", prId);
         }
 
-        return commits;
+        // Oldest commit first so the UI displays a natural chronological order.
+        return commits.OrderBy(c => c.AuthorDate).ToList();
     }
 
     /// <summary>

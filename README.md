@@ -18,7 +18,7 @@ ClaudeTraceHub automatically discovers conversation data from `~/.claude/project
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download) (9.0.308 or compatible)
+- [.NET 9 SDK](https://dotnet.microsoft.com/download) (9.0.314 or compatible)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and used (generates `~/.claude/projects/` data)
 - Azure DevOps or TFS instance
 
