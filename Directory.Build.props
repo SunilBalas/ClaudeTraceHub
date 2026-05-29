@@ -5,11 +5,11 @@
     <!-- Major: breaking changes -->
     <!-- Minor: new features (backward-compatible) -->
     <!-- Patch: bug fixes, hotfixes -->
-    <Version>1.11.0</Version>
+    <Version>1.11.1</Version>
 
     <!-- Product metadata -->
     <Product>ClaudeTraceHub</Product>
-    <Authors>Sunil Balas</Authors>
+    <Authors>Sunil Balas and Jay Chaudhari</Authors>
     <Description>Claude Code conversation trace viewer and TFS work item explorer</Description>
     <Copyright>Copyright © $([System.DateTime]::Now.Year) | Sunil Balas</Copyright>
   </PropertyGroup>

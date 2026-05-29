@@ -38,6 +38,7 @@ public class TaskVerificationRow
     public string Discipline { get; set; } = "";
     public string TaskExecutionType { get; set; } = "";
     public double OriginalEstimate { get; set; }
+    public double RemainingWork { get; set; }
     public string DetectedTaskType { get; set; } = "";
     public List<ValidationIssue> Issues { get; set; } = new();
 }

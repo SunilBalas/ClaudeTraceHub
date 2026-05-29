@@ -393,22 +393,36 @@ public class CodeMergingService
         try
         {
             var encodedProject = Uri.EscapeDataString(project);
-            var url = $"{encodedProject}/_apis/git/repositories/{repoId}/refs?" +
-                      $"filter=heads&$top=1000&api-version={ApiVersion}";
-            var response = await _httpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode) return branches;
+            string? continuationToken = null;
+            const int maxPages = 20; // Hard ceiling — 20 * 1000 = 20K branches.
 
-            var json = await response.Content.ReadAsStringAsync();
-            var doc = JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("value", out var values))
+            for (var page = 0; page < maxPages; page++)
             {
-                foreach (var v in values.EnumerateArray())
+                var url = $"{encodedProject}/_apis/git/repositories/{repoId}/refs?" +
+                          $"filter=heads&$top=1000&api-version={ApiVersion}";
+                if (!string.IsNullOrEmpty(continuationToken))
+                    url += $"&continuationToken={Uri.EscapeDataString(continuationToken)}";
+
+                var response = await _httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode) break;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var doc = JsonDocument.Parse(json);
+
+                if (doc.RootElement.TryGetProperty("value", out var values))
                 {
-                    var name = GetJsonString(v, "name").Replace("refs/heads/", "");
-                    if (!string.IsNullOrEmpty(name))
-                        branches.Add(name);
+                    foreach (var v in values.EnumerateArray())
+                    {
+                        var name = GetJsonString(v, "name").Replace("refs/heads/", "");
+                        if (!string.IsNullOrEmpty(name))
+                            branches.Add(name);
+                    }
                 }
+
+                continuationToken = response.Headers.TryGetValues("x-ms-continuationtoken", out var tokens)
+                    ? tokens.FirstOrDefault()
+                    : null;
+                if (string.IsNullOrEmpty(continuationToken)) break;
             }
         }
         catch (Exception ex)
