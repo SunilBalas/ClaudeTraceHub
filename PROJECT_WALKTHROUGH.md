@@ -52,7 +52,6 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 | Component          | Technology                     | Version  |
 |--------------------|--------------------------------|----------|
 | Runtime            | .NET 9.0                       | 9.0.314  |
-| Runtime            | .NET 9.0                       | 9.0.314  |
 | Web Framework      | Blazor Server (Interactive)    | -        |
 | UI Components      | MudBlazor                      | 8.15.0   |
 | Excel Export       | ClosedXML                      | 0.105.0  |
@@ -63,7 +62,6 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 ## 3. Prerequisites
 
-- **.NET 9 SDK** (9.0.314 or compatible) - [download](https://dot.net/download)
 - **.NET 9 SDK** (9.0.314 or compatible) - [download](https://dot.net/download)
 - **Claude Code CLI** installed and used (generates `~/.claude/projects/` data)
 - **Azure DevOps / TFS** instance (optional, for work item integration)

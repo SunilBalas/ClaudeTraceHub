@@ -1,0 +1,12 @@
+<div class="guide-section-header mb-3">
+    <MudText Typo="Typo.h5" Class="guide-section-title">@Title</MudText>
+    @if (!string.IsNullOrEmpty(Desc))
+    {
+        <MudText Typo="Typo.body2" Color="Color.Tertiary">@Desc</MudText>
+    }
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string Desc { get; set; } = "";
+}

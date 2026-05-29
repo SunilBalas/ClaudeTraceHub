@@ -1704,115 +1704,159 @@ html, body {
     border-top-color: var(--mud-palette-primary-darken);
 }
 
-/* 26. CODE MERGING SHEET DATA GRID */
-/* Auto-size columns to fit container; multi-line header when narrow; ellipsis on overflow. */
-.merging-grid .mud-table-container {
-    overflow-x: auto;
-    max-width: 100%;
+/* ============================================================
+   19. GIT GUIDE
+   ============================================================ */
+
+/* Sidebar tabs container — let the vertical tab nav align nicely */
+.git-guide .git-guide-tabs .mud-tabs-toolbar {
+    min-width: 220px;
+    background: var(--mud-palette-background-grey);
+    border-radius: 10px 0 0 10px;
 }
 
-.merging-grid .mud-table-root {
-    table-layout: auto;
-    width: 100%;
+.git-guide .git-guide-tabs .mud-tab {
+    justify-content: flex-start;
+    text-transform: none;
+    font-size: 0.92rem;
+    min-height: 42px;
+    padding: 6px 14px;
 }
 
-.merging-grid .mud-table-head .mud-table-cell {
-    min-height: 56px;
-    padding: 8px 8px;
-    font-size: 12.5px;
+.git-guide .git-guide-tabs .mud-tab-content {
+    background: var(--mud-palette-surface);
+    border-radius: 0 10px 10px 0;
+    min-height: 70vh;
+}
+
+/* Section header inside a tab */
+.git-guide .guide-section-header {
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+    padding-bottom: 8px;
+}
+
+.git-guide .guide-section-title {
     font-weight: 600;
-    line-height: 1.25;
-    vertical-align: middle;
-    background-color: var(--mud-palette-surface);
-    border-bottom: 2px solid var(--mud-palette-lines-default);
-    white-space: normal;
-    word-break: normal;
-    overflow-wrap: break-word;
-    position: relative;
 }
 
-.merging-grid .mud-table-cell {
-    padding: 6px 8px;
-    vertical-align: middle;
+/* Each command "card" */
+.git-guide .guide-card {
+    border: 1px solid var(--mud-palette-lines-default);
+    transition: border-color 0.18s ease, transform 0.18s ease;
 }
 
-/* Body rows: ellipsis applied per cell via inline styles where needed. */
-.merging-grid .mud-table-body .mud-table-cell {
-    overflow: hidden;
+.git-guide .guide-card:hover {
+    border-color: var(--mud-palette-primary);
 }
 
-/* Make the column-resize handle visible on hover. */
-.merging-grid .column-resizer,
-.merging-grid .mud-resizer {
-    width: 6px;
-    cursor: col-resize;
-    opacity: 0.35;
-    background: linear-gradient(to right, transparent 0, transparent 2px, var(--mud-palette-primary) 2px, var(--mud-palette-primary) 4px, transparent 4px, transparent 6px);
-    transition: opacity 0.15s ease-in-out;
+.git-guide .guide-card-title {
+    font-weight: 600;
+    font-size: 1rem;
 }
 
-.merging-grid .mud-table-head .mud-table-cell:hover .column-resizer,
-.merging-grid .mud-table-head .mud-table-cell:hover .mud-resizer {
-    opacity: 1;
+/* Command block — accent border-left like the original guide */
+.git-guide .cmd-block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: var(--mud-palette-background-grey);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-left: 4px solid var(--mud-palette-primary);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
 }
 
-/* Title cell: wraps freely across as many lines as needed so the FULL requirement / bug / CR
-   name is always visible (no truncation). Tooltip still shows the full string on hover. */
-.merging-grid-title-cell {
-    display: block;
-    line-height: 1.4;
-    min-width: 420px;
-    max-width: 760px;
-    word-break: break-word;
-    overflow-wrap: anywhere;
-    white-space: normal;
+.git-guide .cmd-block.cmd-ok      { border-left-color: #4CAF50; }
+.git-guide .cmd-block.cmd-warn    { border-left-color: #FF9800; }
+.git-guide .cmd-block.cmd-danger  { border-left-color: #F44336; }
+.git-guide .cmd-block.cmd-purple  { border-left-color: #9C27B0; }
+
+.git-guide .cmd-block .cmd-text {
+    flex: 1;
+    background: transparent;
+    color: var(--mud-palette-text-primary);
+    font-size: 0.9rem;
+    word-break: break-all;
+    padding: 0;
 }
 
-/* The title body cell must not clip or single-line its content. */
-.merging-grid .mud-table-body .mud-table-cell.col-title-body {
-    overflow: visible;
-    white-space: normal;
-}
-
-/* Per-column minimum widths so narrow body content (single digits, small chips)
-   can't squeeze the header below its natural label width. */
-.merging-grid .mud-table-head .mud-table-cell.col-id        { min-width: 96px; }
-.merging-grid .mud-table-head .mud-table-cell.col-title,
-.merging-grid .mud-table-body .mud-table-cell.col-title-body { min-width: 420px; }
-.merging-grid .mud-table-head .mud-table-cell.col-type      { min-width: 110px; }
-.merging-grid .mud-table-head .mud-table-cell.col-state     { min-width: 110px; }
-.merging-grid .mud-table-head .mud-table-cell.col-assigned  { min-width: 160px; }
-.merging-grid .mud-table-head .mud-table-cell.col-prs       { min-width: 80px; }
-.merging-grid .mud-table-head .mud-table-cell.col-commits   { min-width: 90px; }
-.merging-grid .mud-table-head .mud-table-cell.col-merged    { min-width: 96px; }
-
-/* Clickable column header that opens a filter popup. The header TEXT is the trigger — no icon —
-   so the header consumes no extra width. Active filters are shown by colour + bold weight. */
-.merging-col-header {
-    cursor: pointer;
-    user-select: none;
-    display: inline-block;
-    white-space: nowrap;
-}
-.merging-col-header:hover {
+/* Inline code & kbd styling within notes */
+.git-guide code {
+    background: var(--mud-palette-background-grey);
     color: var(--mud-palette-primary);
-    text-decoration: underline dotted;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 0.86em;
+    border: 1px solid var(--mud-palette-lines-default);
 }
-.merging-col-header-active {
+
+.git-guide kbd {
+    background: var(--mud-palette-background-grey);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 0.82rem;
     color: var(--mud-palette-primary);
+}
+
+/* Numbered step rows (squash walkthrough) */
+.git-guide .step-row {
+    display: flex;
+    gap: 12px;
+    margin: 6px 0;
+}
+
+.git-guide .step-num {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--mud-palette-background-grey);
+    border: 1px solid var(--mud-palette-primary);
+    color: var(--mud-palette-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-weight: 700;
-}
-.merging-col-header-active::after {
-    content: " •";
-    color: var(--mud-palette-primary);
+    font-size: 0.8rem;
 }
 
-/* Filter popup body opened from a column header. */
-.merging-filter-panel {
-    min-width: 200px;
-    max-width: 280px;
+.git-guide .step-text {
+    padding-top: 2px;
+    font-size: 0.93rem;
+    line-height: 1.5;
 }
-.merging-filter-panel .merging-filter-options {
-    max-height: 260px;
-    overflow-y: auto;
+
+/* Vim "TODO" list visualization for squash */
+.git-guide .todo-list {
+    background: var(--mud-palette-background-grey);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 10px 0;
+    font-family: 'Cascadia Code', Consolas, monospace;
+    font-size: 0.85rem;
+    color: var(--mud-palette-text-primary);
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.6;
+}
+
+.git-guide .todo-pick   { color: #2196F3; }
+.git-guide .todo-squash { color: #4CAF50; font-weight: 700; }
+.git-guide .todo-hash   { color: var(--mud-palette-text-secondary); }
+
+/* Dark-theme refinements (subtle stronger borders) */
+.dark-theme .git-guide .cmd-block,
+.dark-theme .git-guide .todo-list {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.dark-theme .git-guide code {
+    background: rgba(255, 255, 255, 0.05);
 }
