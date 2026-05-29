@@ -56,8 +56,11 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
 }
 
-app.UseStaticFiles();
 app.UseAntiforgery();
+
+// MapStaticAssets fingerprints wwwroot files (content-hashed URLs via @Assets[...]) so the
+// browser always fetches the latest app.css after a change instead of serving a stale copy.
+app.MapStaticAssets();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

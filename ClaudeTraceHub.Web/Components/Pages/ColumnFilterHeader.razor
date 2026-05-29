@@ -1,0 +1,80 @@
+@* Column header that doubles as a filter trigger: clicking the header TEXT (no icon, so the
+   header stays narrow) opens a popup with either a text box or a multi-select value list. *@
+
+<MudMenu Dense="true" AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft">
+    <ActivatorContent>
+        <span class="merging-col-header @(IsActive ? "merging-col-header-active" : "")"
+              title="Click to filter">@Title</span>
+    </ActivatorContent>
+    <ChildContent>
+        <div class="pa-2 merging-filter-panel" @onclick:stopPropagation="true">
+            @if (Mode == ColumnFilterMode.Text)
+            {
+                <MudTextField T="string" Value="@TextValue" ValueChanged="OnTextChanged"
+                              Placeholder="@($"Filter {Title}…")" Immediate="true"
+                              Variant="Variant.Outlined" Margin="Margin.Dense" Clearable="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            }
+            else
+            {
+                <div class="merging-filter-options">
+                    @foreach (var opt in Options)
+                    {
+                        <MudCheckBox T="bool" Value="@Selected.Contains(opt)"
+                                     ValueChanged="@(v => OnToggle(opt, v))"
+                                     Label="@opt" Dense="true" Size="Size.Small" />
+                    }
+                    @if (!Options.Any())
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Tertiary">No values</MudText>
+                    }
+                </div>
+                <div class="d-flex justify-end mt-1">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="OnClear"
+                               Disabled="@(Selected.Count == 0)">Clear</MudButton>
+                </div>
+            }
+        </div>
+    </ChildContent>
+</MudMenu>
+
+@code {
+    public enum ColumnFilterMode { Text, Multi }
+
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public ColumnFilterMode Mode { get; set; } = ColumnFilterMode.Multi;
+
+    // Multi-select mode
+    [Parameter] public IEnumerable<string> Options { get; set; } = Array.Empty<string>();
+    [Parameter] public HashSet<string> Selected { get; set; } = new();
+
+    // Text mode
+    [Parameter] public string TextValue { get; set; } = "";
+    [Parameter] public EventCallback<string> TextValueChanged { get; set; }
+
+    // Raised after any change so the parent can re-filter / re-render.
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private bool IsActive => Mode == ColumnFilterMode.Text
+        ? !string.IsNullOrWhiteSpace(TextValue)
+        : Selected.Count > 0;
+
+    private async Task OnToggle(string option, bool include)
+    {
+        if (include) Selected.Add(option); else Selected.Remove(option);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task OnClear()
+    {
+        Selected.Clear();
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task OnTextChanged(string value)
+    {
+        TextValue = value;
+        await TextValueChanged.InvokeAsync(value);
+        await OnChanged.InvokeAsync();
+    }
+}
