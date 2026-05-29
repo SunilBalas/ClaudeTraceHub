@@ -103,9 +103,10 @@ public class PlanningVerificationService
                             Discipline = task.Discipline,
                             TaskExecutionType = task.TaskExecutionType,
                             OriginalEstimate = task.OriginalEstimate,
+                            RemainingWork = task.RemainingWork,
                             DetectedTaskType = DetectTaskType(task.Title)
                         };
-                        ValidateTask(taskRow, parent.WorkItemType);
+                        ValidateTask(taskRow, parent.WorkItemType, parent.State);
                         row.Tasks.Add(taskRow);
                     }
                 }
@@ -218,7 +219,8 @@ public class PlanningVerificationService
 
     private record WorkItemDetail(
         int Id, string Title, string State, string AssignedTo, string WorkItemType,
-        string Tags, string Discipline, string TaskExecutionType, double OriginalEstimate);
+        string Tags, string Discipline, string TaskExecutionType,
+        double OriginalEstimate, double RemainingWork);
 
     private async Task<List<WorkItemDetail>> FetchWorkItemsAsync(string project, List<int> ids)
     {
@@ -261,7 +263,8 @@ public class PlanningVerificationService
                             GetStringField(f, "System.Tags"),
                             GetStringField(f, "Microsoft.VSTS.Common.Discipline"),
                             GetTaskExecutionType(f),
-                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.OriginalEstimate")
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.OriginalEstimate"),
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.RemainingWork")
                         ));
                     }
                 }
@@ -317,7 +320,8 @@ public class PlanningVerificationService
                             GetStringField(f, "System.Tags"),
                             GetStringField(f, "Microsoft.VSTS.Common.Discipline"),
                             GetTaskExecutionType(f),
-                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.OriginalEstimate")
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.OriginalEstimate"),
+                            GetDoubleField(f, "Microsoft.VSTS.Scheduling.RemainingWork")
                         ));
 
                         if (wi.TryGetProperty("relations", out var rels))
@@ -394,11 +398,34 @@ public class PlanningVerificationService
         }
     }
 
-    private static void ValidateTask(TaskVerificationRow row, string parentWorkItemType)
+    private static void ValidateTask(TaskVerificationRow row, string parentWorkItemType, string parentState)
     {
         var tags = SplitTags(row.Tags);
         var isAlm = row.Title.Contains("ALM", StringComparison.OrdinalIgnoreCase);
         var isUnderBug = parentWorkItemType.Equals("Bug", StringComparison.OrdinalIgnoreCase);
+        var isParentClosed = parentState.Equals("Closed", StringComparison.OrdinalIgnoreCase);
+        var isBugResolution = row.DetectedTaskType.Equals("Bug Resolution", StringComparison.OrdinalIgnoreCase);
+
+        // Closed Parent rule: if Requirement/Bug is Closed, every task must be Closed with Remaining Work = 0.
+        if (isParentClosed)
+        {
+            if (!row.State.Equals("Closed", StringComparison.OrdinalIgnoreCase))
+            {
+                row.Issues.Add(new ValidationIssue
+                {
+                    Rule = "State Sync",
+                    Message = $"Parent is Closed but task state is '{row.State}'."
+                });
+            }
+            if (row.RemainingWork > 0)
+            {
+                row.Issues.Add(new ValidationIssue
+                {
+                    Rule = "Remaining Work",
+                    Message = $"Parent is Closed but task has remaining work {row.RemainingWork:F2}h."
+                });
+            }
+        }
 
         // Tag rule
         if (isAlm)
@@ -432,7 +459,8 @@ public class PlanningVerificationService
                 });
         }
 
-        // Discipline must be set
+        // Discipline: must be set AND match the expected discipline for the detected task type.
+        var expectedDiscipline = ExpectedDiscipline(row.DetectedTaskType);
         if (string.IsNullOrWhiteSpace(row.Discipline))
         {
             row.Issues.Add(new ValidationIssue
@@ -441,12 +469,13 @@ public class PlanningVerificationService
                 Message = "Discipline is missing."
             });
         }
-        else if (!row.Discipline.Equals("Development", StringComparison.OrdinalIgnoreCase))
+        else if (expectedDiscipline != null
+                 && !row.Discipline.Equals(expectedDiscipline, StringComparison.OrdinalIgnoreCase))
         {
             row.Issues.Add(new ValidationIssue
             {
                 Rule = "Discipline",
-                Message = $"Discipline must be 'Development' (currently '{row.Discipline}')."
+                Message = $"Discipline must be '{expectedDiscipline}' (currently '{row.Discipline}')."
             });
         }
 
@@ -470,7 +499,7 @@ public class PlanningVerificationService
                     Message = $"For '{row.DetectedTaskType}' task, expected '{expected}' (currently '{row.TaskExecutionType}')."
                 });
             }
-            else if (expected == null && !string.IsNullOrEmpty(row.DetectedTaskType) && row.DetectedTaskType == "Unknown")
+            else if (expected == null && row.DetectedTaskType == "Unknown")
             {
                 row.Issues.Add(new ValidationIssue
                 {
@@ -480,8 +509,8 @@ public class PlanningVerificationService
             }
         }
 
-        // Original Estimate
-        if (row.OriginalEstimate <= 0)
+        // Original Estimate — skip for Bug Resolution (those tasks are estimated post-hoc).
+        if (!isBugResolution && row.OriginalEstimate <= 0)
         {
             row.Issues.Add(new ValidationIssue
             {
@@ -497,7 +526,16 @@ public class PlanningVerificationService
 
         var t = title.Trim();
 
-        if (StartsWithAny(t, "Code Development", "Code Dev")) return "Code Development";
+        // QA / Test task types (check before Code* so "TC ..." doesn't get mis-classified).
+        if (StartsWithAny(t, "TC Generation", "TC Gen", "Test Case Generation")) return "TC Generation";
+        if (StartsWithAny(t, "TC Review", "Test Case Review")) return "TC Review";
+        if (StartsWithAny(t, "Test Data Preparation", "Test Data Prep")) return "Test Data Preparation";
+        if (StartsWithAny(t, "Level 2", "L2 Testing", "L2:", "L2 -", "L2 ")) return "Level 2";
+        if (StartsWithAny(t, "Level 3", "L3 Testing", "L3:", "L3 -", "L3 ")) return "Level 3";
+
+        // Dev task types.
+        if (StartsWithAny(t, "Code Development", "Code Dev",
+                              "Development -", "Development:", "Development :")) return "Code Development";
         if (StartsWithAny(t, "Code Review")) return "Code Review";
         if (StartsWithAny(t, "Technical Analysis")) return "Technical Analysis";
         if (StartsWithAny(t, "Verification")) return "Verification";
@@ -527,6 +565,29 @@ public class PlanningVerificationService
         "Support" => "Manual",
         "Level 1" => "Manual",
         "Bug Resolution" => null,
+        "TC Generation" => null,
+        "TC Review" => null,
+        "Test Data Preparation" => null,
+        "Level 2" => "Manual",
+        "Level 3" => "Manual",
+        "ALM" => null,
+        _ => null
+    };
+
+    private static string? ExpectedDiscipline(string detectedType) => detectedType switch
+    {
+        "Code Development" => "Development",
+        "Technical Analysis" => "Development",
+        "Code Review" => "Development",
+        "Verification" => "Development",
+        "Support" => "Development",
+        "Level 1" => "Development",
+        "Bug Resolution" => "Development",
+        "TC Generation" => "Test",
+        "TC Review" => "Test",
+        "Test Data Preparation" => "Test",
+        "Level 2" => "Test",
+        "Level 3" => "Test",
         "ALM" => null,
         _ => null
     };
