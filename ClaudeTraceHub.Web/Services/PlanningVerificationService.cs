@@ -55,7 +55,7 @@ public class PlanningVerificationService
 
             // Step 1: Query all Requirements/Bugs in iteration + area (regardless of whether they have tasks)
             var parentIds = await QueryWorkItemIdsAsync(project, iterationPath, teamAreaPaths,
-                "[System.WorkItemType] IN ('Requirement', 'Bug', 'Product Backlog Item', 'User Story')");
+                "[System.WorkItemType] IN ('Requirement', 'Change Request', 'Bug', 'Product Backlog Item', 'User Story')");
 
             if (parentIds.Count == 0)
             {

@@ -26,6 +26,7 @@ builder.Services.AddHttpClient<AiAdoptionService>();
 builder.Services.AddHttpClient<TfsEfficiencyService>();
 builder.Services.AddHttpClient<CodeMergingService>();
 builder.Services.AddHttpClient<PlanningVerificationService>();
+builder.Services.AddHttpClient<TaskPlanningService>();
 
 // Data refresh (filesystem watcher for live updates)
 builder.Services.AddSingleton<DataRefreshService>();

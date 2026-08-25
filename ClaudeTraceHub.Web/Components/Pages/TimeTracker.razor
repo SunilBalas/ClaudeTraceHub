@@ -1,0 +1,627 @@
+@page "/time-tracker"
+@rendermode InteractiveServer
+@implements IDisposable
+@using System.Globalization
+
+<PageTitle>Time Tracker - Claude TraceHub</PageTitle>
+
+<div class="page-content">
+
+    <div class="d-flex justify-space-between align-center mb-4">
+        <div>
+            <MudText Typo="Typo.h4">Time Tracker</MudText>
+            <MudText Typo="Typo.body2" Color="Color.Tertiary">
+                Paste your office punches (alternating IN / OUT). Live-computes worked time, breaks, and projected departure.
+            </MudText>
+        </div>
+    </div>
+
+    <MudGrid>
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 h-100" Style="border-radius: 12px;">
+                <div class="d-flex justify-space-between align-center mb-3">
+                    <MudText Typo="Typo.h6" Class="d-flex align-center">
+                        <MudIcon Icon="@Icons.Material.Filled.EditNote" Class="mr-2" Color="Color.Primary" />
+                        Punches
+                    </MudText>
+                    <div class="d-flex gap-1">
+                        <MudTooltip Text="Load sample data">
+                            <MudIconButton Icon="@Icons.Material.Filled.AutoAwesome" Size="Size.Small"
+                                           Color="Color.Secondary" OnClick="LoadSample" />
+                        </MudTooltip>
+                        <MudTooltip Text="Clear">
+                            <MudIconButton Icon="@Icons.Material.Filled.ClearAll" Size="Size.Small"
+                                           OnClick="Clear" />
+                        </MudTooltip>
+                    </div>
+                </div>
+
+                <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mb-2 d-block">
+                    One time per line. Formats supported: <code>9:14:57 AM</code>, <code>9:14 AM</code>, <code>13:14:57</code>. Odd rows = IN, even rows = OUT.
+                </MudText>
+
+                <MudTextField T="string" Value="_input" ValueChanged="OnInputChanged"
+                              Immediate="true"
+                              Lines="14" Variant="Variant.Outlined"
+                              Placeholder="9:14:57 AM&#10;12:46:43 PM&#10;12:58:10 PM&#10;3:47:50 PM&#10;3:50:44 PM&#10;5:52:17 PM"
+                              Style="font-family:'Consolas','Monaco',monospace; font-size:1.05rem; line-height:1.6;" />
+
+                <MudDivider Class="my-4" />
+
+                <MudText Typo="Typo.subtitle2" Class="mb-2 d-flex align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.Timer" Class="mr-2" Size="Size.Small" Color="Color.Primary" />
+                    Office Target
+                </MudText>
+                <div class="d-flex gap-2 mb-2 flex-wrap">
+                    <MudButton Variant="@(GetTargetVariant("8.5"))"
+                               Color="@(GetTargetColor("8.5"))"
+                               Size="Size.Small"
+                               OnClick="@(() => SetTarget("8.5"))">
+                        8.5 hours
+                    </MudButton>
+                    <MudButton Variant="@(GetTargetVariant("4.5"))"
+                               Color="@(GetTargetColor("4.5"))"
+                               Size="Size.Small"
+                               OnClick="@(() => SetTarget("4.5"))">
+                        4.5 hours
+                    </MudButton>
+                    <MudButton Variant="@(GetTargetVariant("custom"))"
+                               Color="@(GetTargetColor("custom"))"
+                               Size="Size.Small"
+                               OnClick="@(() => SetTarget("custom"))">
+                        Custom
+                    </MudButton>
+                </div>
+                @if (_targetKey == "custom")
+                {
+                    <MudNumericField T="double" Value="_customHours" ValueChanged="OnCustomHoursChanged"
+                                     Immediate="true"
+                                     Label="Custom (hours)"
+                                     Min="0.25" Max="24" Step="0.25"
+                                     Variant="Variant.Outlined" Margin="Margin.Dense"
+                                     Adornment="Adornment.Start"
+                                     AdornmentIcon="@Icons.Material.Filled.HourglassBottom" />
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="2" Class="pa-4 h-100" Style="border-radius: 12px;">
+                <MudText Typo="Typo.h6" Class="mb-3 d-flex align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.QueryStats" Class="mr-2" Color="Color.Primary" />
+                    Summary
+                </MudText>
+
+                @if (_result.Errors.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3" Dense="true">
+                        @foreach (var err in _result.Errors)
+                        {
+                            <div>@err</div>
+                        }
+                    </MudAlert>
+                }
+
+                @if (_result.Punches.Count == 0)
+                {
+                    <div class="pa-6 text-center">
+                        <MudIcon Icon="@Icons.Material.Filled.HourglassEmpty" Size="Size.Large" Color="Color.Tertiary" />
+                        <MudText Color="Color.Tertiary" Class="mt-2">Enter punches to compute.</MudText>
+                    </div>
+                }
+                else
+                {
+                    var live = LiveRemaining;
+                    var liveOffice = LiveOfficeTime;
+                    var gross = LiveGross;
+                    var isOvertime = live.HasValue && live.Value <= TimeSpan.Zero;
+                    var rawPct = TargetHours > 0
+                        ? liveOffice.TotalHours / TargetHours * 100.0
+                        : 0;
+                    // Bar width is the true value clamped to 0–100 (smooth fill).
+                    var pct = Math.Clamp(rawPct, 0, 100);
+                    // Display uses floor so 98.6% never rounds up to 99%, and 100% only shows once the target is truly hit.
+                    var pctDisplay = rawPct >= 100 ? 100 : (int)Math.Floor(rawPct);
+
+                    @* Row 1: In-Office | Break *@
+                    <MudGrid Class="mb-2">
+                        <MudItem xs="6">
+                            <div class="stat-card stat-success @(CurrentlyIn ? "stat-live" : "")">
+                                <MudText Typo="Typo.overline" Class="stat-label">
+                                    @if (CurrentlyIn)
+                                    {
+                                        <span class="pulse-dot pulse-success"></span>
+                                    }
+                                    else
+                                    {
+                                        <MudIcon Icon="@Icons.Material.Filled.WorkOutline" Size="Size.Small" Class="mr-1" />
+                                    }
+                                    In-Office
+                                </MudText>
+                                <MudText Typo="Typo.h5" Class="stat-value stat-value-success">@FormatDuration(liveOffice)</MudText>
+                                @if (CurrentlyIn)
+                                {
+                                    <MudText Typo="Typo.caption" Class="stat-sub">live · includes current session</MudText>
+                                }
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6">
+                            <div class="stat-card stat-warning">
+                                <MudText Typo="Typo.overline" Class="stat-label">
+                                    <MudIcon Icon="@Icons.Material.Filled.LocalCafe" Size="Size.Small" Class="mr-1" />
+                                    Break
+                                </MudText>
+                                <MudText Typo="Typo.h5" Class="stat-value stat-value-warning">@FormatDuration(_result.BreakTime)</MudText>
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+
+                    @* Row 2: Gross Hours | Remaining or Overtime (dynamic single card) *@
+                    <MudGrid Class="mb-2">
+                        <MudItem xs="6">
+                            <div class="stat-card stat-info @(CurrentlyIn ? "stat-live" : "")">
+                                <MudText Typo="Typo.overline" Class="stat-label">
+                                    @if (CurrentlyIn)
+                                    {
+                                        <span class="pulse-dot pulse-info"></span>
+                                    }
+                                    else
+                                    {
+                                        <MudIcon Icon="@Icons.Material.Filled.AccessTimeFilled" Size="Size.Small" Class="mr-1" />
+                                    }
+                                    Gross Hours
+                                </MudText>
+                                <MudText Typo="Typo.h5" Class="stat-value stat-value-info">@FormatDuration(gross)</MudText>
+                                <MudText Typo="Typo.caption" Class="stat-sub">
+                                    @(CurrentlyIn ? "live · first punch → now" : "first → last punch")
+                                </MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6">
+                            @if (live.HasValue)
+                            {
+                                <div class="stat-card @(isOvertime ? "stat-danger stat-live" : "stat-primary stat-live")">
+                                    <MudText Typo="Typo.overline" Class="stat-label">
+                                        <span class="pulse-dot @(isOvertime ? "pulse-danger" : "pulse-primary")"></span>
+                                        @(isOvertime ? "Overtime" : "Time Remaining")
+                                    </MudText>
+                                    <MudText Typo="Typo.h5"
+                                             Class="@(isOvertime ? "stat-value stat-value-danger" : "stat-value stat-value-primary")">
+                                        @FormatDuration(isOvertime ? -live.Value : live.Value)
+                                    </MudText>
+                                    <MudText Typo="Typo.caption" Class="stat-sub">now @NowLabel</MudText>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="stat-card stat-muted">
+                                    <MudText Typo="Typo.overline" Class="stat-label">Time Remaining</MudText>
+                                    <MudText Typo="Typo.h5" Class="stat-value stat-value-muted">—</MudText>
+                                </div>
+                            }
+                        </MudItem>
+                    </MudGrid>
+
+                    @* Progress bar towards the office target — live-fills while currently IN *@
+                    @if (liveOffice > TimeSpan.Zero)
+                    {
+                        <div class="progress-shell mt-2 mb-3">
+                            <div class="progress-fill @(pct >= 100 ? "progress-full" : "")"
+                                 style="@($"width:{pct.ToString("0.##", CultureInfo.InvariantCulture)}%;")"></div>
+                            <div class="progress-label">
+                                <b>@FormatDuration(liveOffice)</b>
+                                <span> of @FormatTarget(TargetHours)</span>
+                                <span class="progress-pct">@pctDisplay%</span>
+                            </div>
+                        </div>
+                    }
+
+                    @* Hero: Projected Departure *@
+                    @if (_result.ProjectedDeparture.HasValue)
+                    {
+                        var gradient = isOvertime
+                            ? "linear-gradient(135deg, #d84315 0%, #ff8a65 100%)"
+                            : "linear-gradient(135deg, var(--mud-palette-primary) 0%, var(--mud-palette-secondary) 100%)";
+                        <MudPaper Elevation="0" Class="hero-card pa-4 text-center my-3"
+                                  Style="@($"border-radius: 14px; background: {gradient}; color: white;")">
+                            <MudText Typo="Typo.overline" Style="color: rgba(255,255,255,0.85); letter-spacing:1.2px;">
+                                <MudIcon Icon="@Icons.Material.Filled.ExitToApp" Size="Size.Small" Class="mr-1" Style="color: white;" />
+                                Projected Departure @@ @FormatTarget(TargetHours)
+                            </MudText>
+                            <MudText Typo="Typo.h2" Style="color: white; font-weight: 600; letter-spacing: 1px; margin-top:6px;">
+                                @FormatTime(_result.ProjectedDeparture.Value)
+                            </MudText>
+                        </MudPaper>
+                    }
+
+                    <MudText Typo="Typo.caption" Color="Color.Tertiary" Class="mt-2 d-block text-center">
+                        @if (_result.Punches.Count % 2 == 1)
+                        {
+                            <text>Currently <b style="color: var(--mud-palette-success);">IN</b> the office</text>
+                        }
+                        else
+                        {
+                            <text>All pairs closed — currently <b style="color: var(--mud-palette-warning);">OUT</b></text>
+                        }
+                    </MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+</div>
+
+@code {
+    private string _input = "";
+    private string _targetKey = "8.5";
+    private double _customHours = 8.5;
+    private ComputationResult _result = new();
+    private System.Threading.Timer? _tickTimer;
+
+    protected override void OnInitialized()
+    {
+        // Tick every second so the live remaining/overtime line updates against the wall clock.
+        _tickTimer = new System.Threading.Timer(async _ =>
+        {
+            try { await InvokeAsync(StateHasChanged); }
+            catch (ObjectDisposedException) { /* component disposed */ }
+        }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    public void Dispose()
+    {
+        _tickTimer?.Dispose();
+        _tickTimer = null;
+    }
+
+    /// <summary>Signed difference between the projected departure and the current wall clock.</summary>
+    private TimeSpan? LiveRemaining =>
+        _result.ProjectedDeparture.HasValue
+            ? _result.ProjectedDeparture.Value - DateTime.Now.TimeOfDay
+            : (TimeSpan?)null;
+
+    private string NowLabel =>
+        DateTime.Now.ToString("h:mm:ss tt", CultureInfo.GetCultureInfo("en-US"));
+
+    /// <summary>True when the most recent punch is IN (so an ongoing work segment is in progress).</summary>
+    private bool CurrentlyIn => _result.Punches.Count > 0 && _result.Punches.Count % 2 == 1;
+
+    /// <summary>
+    /// In-Office time including the ongoing session when the last punch is IN.
+    /// Ticks every second via the wall clock, so the stat card and progress bar move live.
+    /// </summary>
+    private TimeSpan LiveOfficeTime
+    {
+        get
+        {
+            if (!CurrentlyIn) return _result.OfficeTime;
+            var lastIn = _result.Punches[^1];
+            var ongoing = DateTime.Now.TimeOfDay - lastIn;
+            if (ongoing < TimeSpan.Zero) ongoing = TimeSpan.Zero;
+            return _result.OfficeTime + ongoing;
+        }
+    }
+
+    /// <summary>Gross time from first punch to now (live) when currently IN, otherwise first → last punch.</summary>
+    private TimeSpan LiveGross
+    {
+        get
+        {
+            if (_result.Punches.Count == 0) return TimeSpan.Zero;
+            if (CurrentlyIn)
+            {
+                var elapsed = DateTime.Now.TimeOfDay - _result.Punches[0];
+                if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+                return elapsed;
+            }
+            return _result.OfficeTime + _result.BreakTime;
+        }
+    }
+
+    private double TargetHours =>
+        _targetKey == "custom" ? _customHours
+        : double.TryParse(_targetKey, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v
+        : 8.5;
+
+    private void OnInputChanged(string value)
+    {
+        _input = value ?? "";
+        Recompute();
+    }
+
+    private void OnCustomHoursChanged(double value)
+    {
+        _customHours = value;
+        Recompute();
+    }
+
+    private void SetTarget(string key)
+    {
+        _targetKey = key;
+        Recompute();
+    }
+
+    private Variant GetTargetVariant(string key) =>
+        _targetKey == key ? Variant.Filled : Variant.Outlined;
+
+    private Color GetTargetColor(string key) =>
+        _targetKey == key ? Color.Primary : Color.Default;
+
+    private void LoadSample()
+    {
+        _input = "9:14:57 AM\n12:46:43 PM\n12:58:10 PM\n3:47:50 PM\n3:50:44 PM\n5:52:17 PM";
+        Recompute();
+    }
+
+    private void Clear()
+    {
+        _input = "";
+        _result = new();
+    }
+
+    private void Recompute()
+    {
+        var result = new ComputationResult();
+
+        if (string.IsNullOrWhiteSpace(_input))
+        {
+            _result = result;
+            return;
+        }
+
+        var lines = _input.Split('\n', StringSplitOptions.None);
+        TimeSpan? previous = null;
+
+        for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
+        {
+            var raw = lines[lineIdx].Trim();
+            if (string.IsNullOrEmpty(raw)) continue;
+
+            if (!TryParseTime(raw, out var t))
+            {
+                result.Errors.Add($"Line {lineIdx + 1}: could not parse '{raw}'.");
+                continue;
+            }
+
+            if (previous.HasValue && t < previous.Value)
+            {
+                result.Errors.Add($"Line {lineIdx + 1}: '{raw}' is earlier than the previous punch — must be non-decreasing.");
+                continue;
+            }
+
+            result.Punches.Add(t);
+            previous = t;
+        }
+
+        // Sum office and break time from closed pairs.
+        var office = TimeSpan.Zero;
+        var brk = TimeSpan.Zero;
+        for (int i = 0; i + 1 < result.Punches.Count; i += 2)
+        {
+            office += result.Punches[i + 1] - result.Punches[i];      // IN → OUT
+            if (i + 2 < result.Punches.Count)
+                brk += result.Punches[i + 2] - result.Punches[i + 1]; // OUT → next IN
+        }
+        result.OfficeTime = office;
+        result.BreakTime = brk;
+
+        if (result.Punches.Count > 0)
+        {
+            var firstIn = result.Punches[0];
+            var target = TimeSpan.FromHours(TargetHours);
+            var projected = firstIn + target + brk;
+
+            if (projected.TotalHours >= 24)
+                projected = TimeSpan.FromHours(23.999); // clamp for display
+
+            result.ProjectedDeparture = projected;
+            result.Remaining = target - office;
+        }
+
+        _result = result;
+    }
+
+    private static bool TryParseTime(string raw, out TimeSpan time)
+    {
+        // Try locale-flexible parse first (handles "9:14:57 AM").
+        var enUs = CultureInfo.GetCultureInfo("en-US");
+        if (DateTime.TryParse(raw, enUs, DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.NoCurrentDateDefault, out var dt))
+        {
+            time = dt.TimeOfDay;
+            return true;
+        }
+
+        var formats = new[]
+        {
+            "h:mm:ss tt", "h:mm tt",
+            "hh:mm:ss tt", "hh:mm tt",
+            "H:mm:ss", "H:mm",
+            "HH:mm:ss", "HH:mm"
+        };
+        if (DateTime.TryParseExact(raw, formats, enUs, DateTimeStyles.AllowWhiteSpaces, out dt))
+        {
+            time = dt.TimeOfDay;
+            return true;
+        }
+
+        time = default;
+        return false;
+    }
+
+    private static string FormatTime(TimeSpan t)
+    {
+        var dt = DateTime.Today.Add(t);
+        return dt.ToString("h:mm:ss tt", CultureInfo.GetCultureInfo("en-US"));
+    }
+
+    private static string FormatDuration(TimeSpan t)
+    {
+        var neg = t < TimeSpan.Zero;
+        if (neg) t = -t;
+        if (t.TotalMinutes < 1) return $"{t.Seconds}s";
+        if (t.TotalHours < 1) return $"{t.Minutes}m {t.Seconds}s";
+        return $"{(int)t.TotalHours}h {t.Minutes}m {t.Seconds}s";
+    }
+
+    /// <summary>Renders a decimal-hours target as "Xh Ym" so "8.5" is shown as "8h 30m".</summary>
+    private static string FormatTarget(double hours)
+    {
+        var total = TimeSpan.FromHours(hours);
+        var wholeHours = (int)total.TotalHours;
+        var minutes = total.Minutes;
+        return minutes == 0 ? $"{wholeHours}h" : $"{wholeHours}h {minutes}m";
+    }
+
+    private class ComputationResult
+    {
+        public List<TimeSpan> Punches { get; set; } = new();
+        public TimeSpan OfficeTime { get; set; }
+        public TimeSpan BreakTime { get; set; }
+        public TimeSpan? ProjectedDeparture { get; set; }
+        public TimeSpan? Remaining { get; set; }
+        public List<string> Errors { get; set; } = new();
+    }
+}
+
+<style>
+    /* ---- Stat cards ---- */
+    .stat-card {
+        position: relative;
+        padding: 12px 14px 10px 14px;
+        border-radius: 12px;
+        background: var(--mud-palette-background);
+        border-left: 4px solid transparent;
+        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+        overflow: hidden;
+        cursor: default;
+    }
+    .stat-card::before {
+        content: "";
+        position: absolute; inset: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0) 60%);
+        pointer-events: none;
+    }
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+    }
+    .stat-label {
+        display: flex; align-items: center;
+        color: var(--mud-palette-text-secondary);
+        font-size: 0.68rem !important;
+        letter-spacing: 1px;
+    }
+    .stat-value { font-weight: 600 !important; letter-spacing: 0.5px; }
+    .stat-sub {
+        color: var(--mud-palette-text-secondary);
+        font-size: 0.7rem !important;
+        opacity: 0.75;
+    }
+
+    .stat-success  { border-left-color: var(--mud-palette-success);  background: color-mix(in srgb, var(--mud-palette-success) 8%, transparent); }
+    .stat-warning  { border-left-color: var(--mud-palette-warning);  background: color-mix(in srgb, var(--mud-palette-warning) 8%, transparent); }
+    .stat-info     { border-left-color: var(--mud-palette-info);     background: color-mix(in srgb, var(--mud-palette-info)    8%, transparent); }
+    .stat-primary  { border-left-color: var(--mud-palette-primary);  background: color-mix(in srgb, var(--mud-palette-primary) 8%, transparent); }
+    .stat-danger   { border-left-color: #d84315;                     background: color-mix(in srgb, #d84315 10%, transparent); }
+    .stat-muted    { border-left-color: var(--mud-palette-divider); }
+
+    .stat-value-success { color: var(--mud-palette-success) !important; }
+    .stat-value-warning { color: var(--mud-palette-warning) !important; }
+    .stat-value-info    { color: var(--mud-palette-info)    !important; }
+    .stat-value-primary { color: var(--mud-palette-primary) !important; }
+    .stat-value-danger  { color: #d84315 !important; }
+    .stat-value-muted   { color: var(--mud-palette-text-secondary) !important; }
+
+    /* Live card gets a subtle breathing background */
+    .stat-live {
+        animation: cardBreathe 3.2s ease-in-out infinite;
+    }
+    @@keyframes cardBreathe {
+        0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+        50%     { box-shadow: 0 4px 22px rgba(0,0,0,0.20); }
+    }
+
+    /* ---- Pulse dot ---- */
+    .pulse-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.6);
+        animation: pulseDot 1.6s ease-in-out infinite;
+    }
+    .pulse-primary { background: var(--mud-palette-primary); }
+    .pulse-danger  { background: #ff8a65; }
+    .pulse-success { background: var(--mud-palette-success); }
+    .pulse-info    { background: var(--mud-palette-info); }
+
+    @@keyframes pulseDot {
+        0%   { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55); }
+        70%  { box-shadow: 0 0 0 8px rgba(255, 255, 255, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+    }
+
+    /* ---- Progress bar ---- */
+    .progress-shell {
+        position: relative;
+        height: 26px;
+        border-radius: 13px;
+        background: color-mix(in srgb, var(--mud-palette-text-secondary) 12%, transparent);
+        overflow: hidden;
+    }
+    .progress-fill {
+        position: absolute; inset: 0;
+        background: linear-gradient(90deg, var(--mud-palette-success) 0%, var(--mud-palette-primary) 100%);
+        transition: width 400ms cubic-bezier(0.25, 0.9, 0.3, 1.05);
+        border-radius: 13px;
+    }
+    .progress-fill.progress-full {
+        background: linear-gradient(90deg, var(--mud-palette-primary) 0%, var(--mud-palette-secondary) 100%);
+        animation: progressGlow 2.5s ease-in-out infinite;
+    }
+    .progress-label {
+        position: relative;
+        z-index: 1;
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        height: 100%;
+        font-size: 0.78rem;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    }
+    .progress-pct {
+        margin-left: 8px;
+        padding: 1px 8px;
+        border-radius: 10px;
+        background: rgba(0,0,0,0.25);
+        font-weight: 600;
+    }
+    @@keyframes progressGlow {
+        0%,100% { filter: brightness(1); }
+        50%     { filter: brightness(1.15); }
+    }
+
+    /* ---- Hero card ---- */
+    .hero-card {
+        position: relative;
+        overflow: hidden;
+        transition: transform 250ms ease, box-shadow 250ms ease;
+    }
+    .hero-card::after {
+        content: "";
+        position: absolute;
+        top: -50%; left: -50%;
+        width: 200%; height: 200%;
+        background: radial-gradient(circle at center, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 40%);
+        animation: heroSweep 6s linear infinite;
+        pointer-events: none;
+    }
+    .hero-card:hover {
+        transform: translateY(-2px) scale(1.005);
+        box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+    }
+    @@keyframes heroSweep {
+        0%   { transform: translate(-15%, -15%) rotate(0deg); }
+        100% { transform: translate(-15%, -15%) rotate(360deg); }
+    }
+</style>

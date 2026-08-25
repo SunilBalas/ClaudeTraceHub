@@ -132,7 +132,7 @@ else
             <MudGrid Class="mt-2">
                 <MudItem xs="12" sm="6" md="3">
                     <MudSelect T="string" Value="_selectedMember" ValueChanged="OnMemberChanged"
-                               Label="Member" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Label="Member (Assigned To)" Variant="Variant.Outlined" Margin="Margin.Dense"
                                Clearable="true"
                                Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person">
                         <MudSelectItem T="string" Value="@("")">All Members</MudSelectItem>
@@ -142,7 +142,19 @@ else
                         }
                     </MudSelect>
                 </MudItem>
-                <MudItem xs="12" sm="6" md="4">
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="string" Value="_selectedCreatedBy" ValueChanged="OnCreatedByChanged"
+                               Label="Created By (PR Author)" Variant="Variant.Outlined" Margin="Margin.Dense"
+                               Clearable="true"
+                               Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.AccountCircle">
+                        <MudSelectItem T="string" Value="@("")">All Creators</MudSelectItem>
+                        @foreach (var c in AllPrCreators)
+                        {
+                            <MudSelectItem T="string" Value="@c">@c</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
                     <MudAutocomplete T="string" Value="_targetBranch"
                                      ValueChanged="OnTargetBranchChanged"
                                      SearchFunc="SearchBranches"
@@ -217,20 +229,20 @@ else
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">Total PRs</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Primary">@filtered.Sum(r => r.TotalPRs)</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@filtered.Sum(r => VisiblePrs(r).Count)</MudText>
                 </MudPaper>
             </MudItem>
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">Total Commits</MudText>
-                    <MudText Typo="Typo.h4" Color="Color.Info">@filtered.Sum(r => r.TotalCommits)</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Info">@filtered.Sum(r => VisiblePrs(r).Sum(p => p.Commits.Count))</MudText>
                 </MudPaper>
             </MudItem>
             <MudItem xs="6" sm="3">
                 <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
                     <MudText Typo="Typo.overline" Color="Color.Tertiary">With PRs</MudText>
                     <MudText Typo="Typo.h4" Color="Color.Success">
-                        @filtered.Count(r => r.TotalPRs > 0) / @filtered.Count
+                        @filtered.Count(r => VisiblePrs(r).Count > 0) / @filtered.Count
                     </MudText>
                 </MudPaper>
             </MudItem>
@@ -350,9 +362,12 @@ else
                 <PropertyColumn Property="x => x.TotalPRs" Title="PRs" Sortable="false" Resizable="true"
                                 HeaderClass="col-prs" CellStyle="text-align:center">
                     <CellTemplate>
-                        @if (context.Item.TotalPRs > 0)
+                        @{
+                            var prCount = VisiblePrs(context.Item).Count;
+                        }
+                        @if (prCount > 0)
                         {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Primary">@context.Item.TotalPRs</MudChip>
+                            <MudChip T="string" Size="Size.Small" Color="Color.Primary">@prCount</MudChip>
                         }
                         else
                         {
@@ -363,9 +378,12 @@ else
                 <PropertyColumn Property="x => x.TotalCommits" Title="Commits" Sortable="false" Resizable="true"
                                 HeaderClass="col-commits" CellStyle="text-align:center">
                     <CellTemplate>
-                        @if (context.Item.TotalCommits > 0)
+                        @{
+                            var commitCount = VisiblePrs(context.Item).Sum(p => p.Commits.Count);
+                        }
+                        @if (commitCount > 0)
                         {
-                            <MudText Color="Color.Info">@context.Item.TotalCommits</MudText>
+                            <MudText Color="Color.Info">@commitCount</MudText>
                         }
                         else
                         {
@@ -401,7 +419,10 @@ else
                 }
             </Columns>
             <ChildRowContent>
-                @if (context.Item.PullRequests.Count > 0)
+                @{
+                    var visiblePrsForRow = VisiblePrs(context.Item);
+                }
+                @if (visiblePrsForRow.Count > 0)
                 {
                     <MudSimpleTable Dense="true" Hover="true" Bordered="true" Class="ma-2"
                                     Style="background: var(--mud-palette-background-grey);">
@@ -423,7 +444,7 @@ else
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var pr in context.Item.PullRequests)
+                            @foreach (var pr in visiblePrsForRow)
                             {
                                 var prKey = $"{context.Item.WorkItemId}_{pr.PullRequestId}";
                                 <tr style="cursor:pointer;" @onclick="@(() => TogglePrExpand(prKey))">
@@ -590,6 +611,7 @@ else
     private string _currentIterationPath = "";
     private string _targetBranch = "";
     private string _selectedMember = "";
+    private string _selectedCreatedBy = "";
     private bool _deliverableOnly = true;
     private bool _orderByFirstCommit;
     private bool _loading;
@@ -715,6 +737,7 @@ else
         _selectedTeam = team;
         _currentIterationPath = "";
         _selectedMember = "";
+        _selectedCreatedBy = "";
         _bundle = new();
 
         if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
@@ -744,6 +767,7 @@ else
     {
         _currentIterationPath = iteration;
         _selectedMember = "";
+        _selectedCreatedBy = "";
         _bundle = new();
         await LoadData();
     }
@@ -825,6 +849,31 @@ else
         _expandedPR = null;
     }
 
+    private void OnCreatedByChanged(string createdBy)
+    {
+        _selectedCreatedBy = createdBy ?? "";
+        _expandedPR = null;
+    }
+
+    /// <summary>Distinct PR authors across all requirements, sorted for the dropdown.</summary>
+    private IEnumerable<string> AllPrCreators =>
+        _bundle.Requirements
+            .SelectMany(r => r.PullRequests)
+            .Select(p => p.CreatedBy)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(n => n, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>PRs on this row that should be shown given the current Created By filter.</summary>
+    private List<PullRequestInfo> VisiblePrs(RequirementMergingRow row)
+    {
+        if (string.IsNullOrEmpty(_selectedCreatedBy))
+            return row.PullRequests;
+        return row.PullRequests
+            .Where(p => string.Equals(p.CreatedBy, _selectedCreatedBy, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
     private Task<IEnumerable<string>> SearchBranches(string? value, CancellationToken ct)
     {
         if (_availableBranches.Count == 0)
@@ -892,6 +941,10 @@ else
 
         if (!string.IsNullOrEmpty(_selectedMember))
             query = query.Where(r => string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase));
+
+        if (!string.IsNullOrEmpty(_selectedCreatedBy))
+            query = query.Where(r => r.PullRequests.Any(p =>
+                string.Equals(p.CreatedBy, _selectedCreatedBy, StringComparison.OrdinalIgnoreCase)));
 
         if (_orderByFirstCommit)
         {
@@ -1040,9 +1093,10 @@ else
             int row = 2;
             foreach (var req in FilteredRequirements())
             {
-                if (req.PullRequests.Count == 0)
+                var reqPrs = VisiblePrs(req);
+                if (reqPrs.Count == 0)
                 {
-                    // Requirement with no PRs - still show the requirement row
+                    // Requirement with no PRs (or all PRs filtered out) - still show the requirement row
                     ws.Cell(row, 1).Value = req.WorkItemId;
                     ws.Cell(row, 2).Value = req.Title;
                     ws.Cell(row, 3).Value = req.WorkItemType;
@@ -1054,7 +1108,7 @@ else
                 }
                 else
                 {
-                    foreach (var pr in req.PullRequests)
+                    foreach (var pr in reqPrs)
                     {
                         if (pr.Commits.Count == 0)
                         {
