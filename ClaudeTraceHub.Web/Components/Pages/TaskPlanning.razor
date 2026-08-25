@@ -1,0 +1,526 @@
+@page "/task-planning"
+@rendermode InteractiveServer
+@inject TaskPlanningService PlanningService
+@inject AzureDevOpsService DevOpsService
+@inject AiAdoptionService AdoptionService
+@inject IOptionsSnapshot<AzureDevOpsSettings> AzureSettings
+@inject ISnackbar Snackbar
+@inject IJSRuntime JSRuntime
+@using ClaudeTraceHub.Web.Models
+@using ClaudeTraceHub.Web.Services
+@using Microsoft.Extensions.Options
+
+<PageTitle>Task Planning - Claude TraceHub</PageTitle>
+
+@if (!PlanningService.IsConfigured)
+{
+    <div class="page-content">
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+            Azure DevOps is not configured. Go to <MudLink Href="/settings" Color="Color.Inherit"><b>Settings</b></MudLink> to set up your connection.
+        </MudAlert>
+    </div>
+}
+else
+{
+    <div class="page-content">
+
+    <div class="d-flex justify-space-between align-center mb-4">
+        <MudText Typo="Typo.h4">Task Planning</MudText>
+        <MudText Typo="Typo.body2" Color="Color.Tertiary">
+            Read-only — names only. Copy and paste into TFS manually.
+        </MudText>
+    </div>
+
+    <MudPaper Elevation="2" Class="pa-4 mb-4" Style="border-radius: 12px;">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedProject" ValueChanged="OnProjectChanged"
+                           Label="Project" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Folder">
+                    @foreach (var p in _projects)
+                    {
+                        <MudSelectItem T="string" Value="@p">@p</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_selectedTeam" ValueChanged="OnTeamChanged"
+                           Label="Team" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_teams.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Groups">
+                    @{
+                        var myTeamsList = _teams.Where(t => _myTeams.Contains(t)).ToList();
+                        var otherTeamsList = _teams.Where(t => !_myTeams.Contains(t)).ToList();
+                    }
+                    @if (myTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Primary">My Teams</MudText>
+                        </MudSelectItem>
+                        @foreach (var t in myTeamsList)
+                        {
+                            <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                        }
+                    }
+                    @if (myTeamsList.Any() && otherTeamsList.Any())
+                    {
+                        <MudSelectItem T="string" Value="@("__divider__")" Disabled="true">
+                            <MudText Typo="Typo.overline" Color="Color.Default">Other Teams</MudText>
+                        </MudSelectItem>
+                    }
+                    @foreach (var t in otherTeamsList)
+                    {
+                        <MudSelectItem T="string" Value="@t">@t</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudSelect T="string" Value="_currentIterationPath" ValueChanged="OnIterationChanged"
+                           Label="Iteration" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Disabled="@(_iterations.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Replay">
+                    @foreach (var iter in _iterations)
+                    {
+                        <MudSelectItem T="string" Value="@iter">@TruncateIteration(iter)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_selectedMember" ValueChanged="OnMemberChanged"
+                           Label="Member" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Clearable="true"
+                           Disabled="@(_bundle.Parents.Count == 0)"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Person">
+                    <MudSelectItem T="string" Value="@("")">All Members</MudSelectItem>
+                    @foreach (var m in _bundle.Parents.Select(p => p.AssignedTo).Distinct().OrderBy(n => n))
+                    {
+                        <MudSelectItem T="string" Value="@m">@m</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="string" Value="_tagFilter" ValueChanged="OnTagFilterChanged"
+                           Label="Tag" Variant="Variant.Outlined" Margin="Margin.Dense"
+                           Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Sell">
+                    <MudSelectItem T="string" Value="@("All")">All</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Deliverable")">Deliverable</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Non-Deliverable")">Non-Deliverable</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2" Class="d-flex align-end">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@(_loading ? "" : Icons.Material.Filled.Sync)"
+                           OnClick="LoadData"
+                           Disabled="@(string.IsNullOrEmpty(_currentIterationPath) || _loading)"
+                           FullWidth="true">
+                    @if (_loading)
+                    {
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Class="mr-1" />
+                        <text>Loading...</text>
+                    }
+                    else
+                    {
+                        <text>Load</text>
+                    }
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_loading)
+    {
+        <div class="d-flex align-center justify-center pa-8 gap-2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Large" />
+            <MudText Typo="Typo.body1" Color="Color.Tertiary">Loading requirements...</MudText>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(_bundle.ErrorMessage) && !_loading)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-4">@_bundle.ErrorMessage</MudAlert>
+    }
+
+    @if (_bundle.Parents.Count > 0 && !_loading)
+    {
+        var filtered = FilteredParents();
+        var totalSuggested = filtered.Sum(p => p.SuggestedTasks.Count);
+
+        <MudGrid Class="mb-4">
+            <MudItem xs="6" sm="4">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Parents</MudText>
+                    <MudText Typo="Typo.h4">@filtered.Count</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="6" sm="4">
+                <MudPaper Elevation="2" Class="pa-4 text-center" Style="border-radius: 12px;">
+                    <MudText Typo="Typo.overline" Color="Color.Tertiary">Suggested Tasks</MudText>
+                    <MudText Typo="Typo.h4" Color="Color.Primary">@totalSuggested</MudText>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" sm="4" Class="d-flex align-center justify-end">
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small"
+                           StartIcon="@(_allExpanded ? Icons.Material.Filled.UnfoldLess : Icons.Material.Filled.UnfoldMore)"
+                           OnClick="ToggleAll">
+                    @(_allExpanded ? "Collapse All" : "Expand All")
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        <MudTable Items="@filtered" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+                  Class="mb-4" Elevation="2" Style="border-radius: 12px;">
+            <HeaderContent>
+                <MudTh>ID</MudTh>
+                <MudTh>Title</MudTh>
+                <MudTh>Type</MudTh>
+                <MudTh>State</MudTh>
+                <MudTh>Assigned To</MudTh>
+                <MudTh>Tags</MudTh>
+                <MudTh Style="text-align:center">Suggestions</MudTh>
+                <MudTh Style="text-align:center">Actions</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="ID">
+                    <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                               StartIcon="@(IsExpanded(context.WorkItemId) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                               OnClick="@(() => ToggleExpand(context.WorkItemId))">
+                        <b>@context.WorkItemId</b>
+                    </MudButton>
+                </MudTd>
+                <MudTd DataLabel="Title">
+                    <span style="max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:inline-block;"
+                          title="@context.Title">@context.Title</span>
+                </MudTd>
+                <MudTd DataLabel="Type">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@(context.WorkItemType.Equals("Bug", StringComparison.OrdinalIgnoreCase) ? Color.Error : Color.Info)">
+                        @context.WorkItemType
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="State">
+                    <MudChip T="string" Size="Size.Small" Color="@GetStateColor(context.State)">@context.State</MudChip>
+                </MudTd>
+                <MudTd DataLabel="Assigned To">@context.AssignedTo</MudTd>
+                <MudTd DataLabel="Tags">
+                    @if (!string.IsNullOrWhiteSpace(context.Tags))
+                    {
+                        @foreach (var tag in context.Tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Default" Class="ma-0">@tag</MudChip>
+                        }
+                    }
+                    else
+                    {
+                        <MudText Color="Color.Tertiary">-</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="Suggestions" Style="text-align:center">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">
+                        @context.SuggestedTasks.Count
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="Actions" Style="text-align:center">
+                    <MudTooltip Text="Copy all task titles (newline-separated)">
+                        <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                                       Color="Color.Primary"
+                                       OnClick="@(() => CopyAllTitles(context))" />
+                    </MudTooltip>
+                </MudTd>
+            </RowTemplate>
+            <ChildRowContent>
+                @if (IsExpanded(context.WorkItemId))
+                {
+                    <MudTr>
+                        <td colspan="8" class="pa-2" style="background: var(--mud-palette-background-grey);">
+                            <MudSimpleTable Dense="true" Bordered="true" Class="my-1"
+                                            Style="background: var(--mud-palette-surface); font-size: 0.85rem;">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50%">Suggested Task Title</th>
+                                        <th>Discipline</th>
+                                        <th>Exec Type</th>
+                                        <th>Tag</th>
+                                        <th style="text-align:center">Copy</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var st in context.SuggestedTasks)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <code style="font-size:0.9em;">@st.Title</code>
+                                            </td>
+                                            <td>
+                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">
+                                                    @st.Discipline
+                                                </MudChip>
+                                            </td>
+                                            <td>
+                                                @if (!string.IsNullOrEmpty(st.TaskExecutionType))
+                                                {
+                                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Secondary">
+                                                        @st.TaskExecutionType
+                                                    </MudChip>
+                                                }
+                                                else
+                                                {
+                                                    <MudText Color="Color.Tertiary">—</MudText>
+                                                }
+                                            </td>
+                                            <td>
+                                                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Default">
+                                                    @st.Tag
+                                                </MudChip>
+                                            </td>
+                                            <td style="text-align:center">
+                                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                                                               Color="Color.Primary"
+                                                               OnClick="@(() => CopyText(st.Title))" />
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+                        </td>
+                    </MudTr>
+                }
+            </ChildRowContent>
+        </MudTable>
+    }
+
+    </div>
+}
+
+@code {
+    private List<string> _projects = new();
+    private List<string> _teams = new();
+    private List<string> _iterations = new();
+    private HashSet<string> _myTeams = new(StringComparer.OrdinalIgnoreCase);
+    private string _selectedProject = "";
+    private string _selectedTeam = "";
+    private string _currentIterationPath = "";
+    private string _selectedMember = "";
+    private string _tagFilter = "All";
+    private bool _loading;
+    private bool _allExpanded;
+    private HashSet<int> _expanded = new();
+    private TaskPlanningBundle _bundle = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = AzureSettings.Value;
+        if (!settings.IsConfigured) return;
+
+        _projects = settings.Projects;
+
+        if (_projects.Count > 0)
+        {
+            _selectedProject = _projects[0];
+            await LoadTeamsAndAutoSelect();
+        }
+    }
+
+    private async Task LoadTeamsAndAutoSelect()
+    {
+        if (string.IsNullOrEmpty(_selectedProject)) return;
+
+        var teamsTask = DevOpsService.GetTeamsAsync(_selectedProject);
+        var myTeamsTask = DevOpsService.GetMyTeamsAsync(_selectedProject);
+        var iterTask = AdoptionService.GetIterationPathsAsync(_selectedProject);
+        await Task.WhenAll(teamsTask, myTeamsTask, iterTask);
+
+        _teams = teamsTask.Result;
+        _myTeams = new HashSet<string>(myTeamsTask.Result, StringComparer.OrdinalIgnoreCase);
+        _iterations = iterTask.Result;
+
+        if (_myTeams.Count > 0)
+        {
+            _selectedTeam = _myTeams.First();
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnProjectChanged(string project)
+    {
+        _selectedProject = project;
+        _selectedTeam = "";
+        _currentIterationPath = "";
+        _selectedMember = "";
+        _bundle = new();
+        _expanded.Clear();
+        await LoadTeamsAndAutoSelect();
+    }
+
+    private async Task OnTeamChanged(string team)
+    {
+        _selectedTeam = team;
+        _currentIterationPath = "";
+        _selectedMember = "";
+        _bundle = new();
+        _expanded.Clear();
+
+        if (string.IsNullOrEmpty(_selectedProject) || string.IsNullOrEmpty(_selectedTeam)) return;
+        try
+        {
+            var iterPath = await DevOpsService.GetCurrentIterationAsync(_selectedProject, _selectedTeam);
+            if (!string.IsNullOrEmpty(iterPath))
+            {
+                _currentIterationPath = iterPath;
+                await LoadData();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnIterationChanged(string iteration)
+    {
+        _currentIterationPath = iteration;
+        _selectedMember = "";
+        _bundle = new();
+        _expanded.Clear();
+        await LoadData();
+    }
+
+    private void OnMemberChanged(string member)
+    {
+        _selectedMember = member ?? "";
+        _expanded.Clear();
+        _allExpanded = false;
+    }
+
+    private void OnTagFilterChanged(string filter)
+    {
+        _tagFilter = filter ?? "All";
+        _expanded.Clear();
+        _allExpanded = false;
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrEmpty(_currentIterationPath)) return;
+
+        _loading = true;
+        _expanded.Clear();
+        _allExpanded = false;
+        StateHasChanged();
+
+        try
+        {
+            _bundle = await PlanningService.GetTaskPlanningDataAsync(
+                _selectedProject, _selectedTeam, _currentIterationPath);
+
+            if (!string.IsNullOrEmpty(_bundle.ErrorMessage))
+                Snackbar.Add(_bundle.ErrorMessage, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Error: {ex.Message}", Severity.Error);
+            _bundle = new() { ErrorMessage = ex.Message };
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool IsExpanded(int id) => _expanded.Contains(id);
+
+    private void ToggleExpand(int id)
+    {
+        if (!_expanded.Add(id))
+            _expanded.Remove(id);
+    }
+
+    private void ToggleAll()
+    {
+        var filtered = FilteredParents();
+        if (_allExpanded)
+        {
+            _expanded.Clear();
+            _allExpanded = false;
+        }
+        else
+        {
+            foreach (var p in filtered) _expanded.Add(p.WorkItemId);
+            _allExpanded = true;
+        }
+    }
+
+    private List<ParentPlanningRow> FilteredParents()
+    {
+        IEnumerable<ParentPlanningRow> q = _bundle.Parents;
+
+        if (!string.IsNullOrEmpty(_selectedMember))
+        {
+            q = q.Where(r => string.Equals(r.AssignedTo, _selectedMember, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_tagFilter == "Deliverable")
+        {
+            q = q.Where(r => HasTag(r.Tags, "Deliverable"));
+        }
+        else if (_tagFilter == "Non-Deliverable")
+        {
+            q = q.Where(r => HasTag(r.Tags, "Non-Deliverable")
+                          || HasTag(r.Tags, "NonDeliverable")
+                          || HasTag(r.Tags, "Non Deliverable")
+                          || HasTag(r.Tags, "Non-deliverable"));
+        }
+
+        return q.ToList();
+    }
+
+    private static bool HasTag(string tags, string tag)
+    {
+        if (string.IsNullOrWhiteSpace(tags)) return false;
+        return tags.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                   .Any(t => t.Equals(tag, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task CopyText(string text)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            Snackbar.Add("Copied to clipboard", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Copy failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task CopyAllTitles(ParentPlanningRow row)
+    {
+        var combined = string.Join("\n", row.SuggestedTasks.Select(s => s.Title));
+        await CopyText(combined);
+    }
+
+    private static Color GetStateColor(string state) => state.ToLower() switch
+    {
+        "closed" => Color.Success,
+        "resolved" => Color.Warning,
+        "active" => Color.Info,
+        "new" => Color.Default,
+        "proposed" => Color.Default,
+        _ => Color.Default
+    };
+
+    private static string TruncateIteration(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return "";
+        var parts = path.Split('\\');
+        return parts.Length > 2 ? string.Join("\\", parts[^2..]) : path;
+    }
+}
