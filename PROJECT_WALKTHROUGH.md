@@ -26,7 +26,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 ## 1. Overview
 
-**ClaudeTraceHub** is a .NET 9.0 Blazor Server application that provides a web-based UI for browsing Claude Code conversation traces and linking them to Azure DevOps / TFS work items.
+**ClaudeTraceHub** is a .NET 10.0 Blazor Server application that provides a web-based UI for browsing Claude Code conversation traces and linking them to Azure DevOps / TFS work items.
 
 ### What It Does
 
@@ -51,7 +51,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 | Component          | Technology                     | Version  |
 |--------------------|--------------------------------|----------|
-| Runtime            | .NET 9.0                       | 9.0.314  |
+| Runtime            | .NET 10.0                      | 10.0.401 |
 | Web Framework      | Blazor Server (Interactive)    | -        |
 | UI Components      | MudBlazor                      | 8.15.0   |
 | Excel Export       | ClosedXML                      | 0.105.0  |
@@ -62,7 +62,7 @@ A comprehensive guide to the ClaudeTraceHub project: architecture, file structur
 
 ## 3. Prerequisites
 
-- **.NET 9 SDK** (9.0.314 or compatible) - [download](https://dot.net/download)
+- **.NET 10 SDK** (10.0.401 or compatible) - [download](https://dot.net/download)
 - **Claude Code CLI** installed and used (generates `~/.claude/projects/` data)
 - **Azure DevOps / TFS** instance (optional, for work item integration)
 
@@ -873,7 +873,7 @@ The auto command analyzes commits since the last `v*` tag using PowerShell for r
 ## 14. Build & Deployment Scripts
 
 ### scripts/build.bat
-Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\9.0.314\Sdks` to ensure the .NET 9 SDK is used.
+Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\10.0.401\Sdks` to ensure the .NET 10 SDK is used.
 
 ### scripts/clean.bat
 Cleans build artifacts (`dotnet clean`).
@@ -893,7 +893,7 @@ Main CLI entry point. Commands:
 - `status` — Checks if registered and running
 - `version` — Shows current version
 
-> The publish command auto-detects the .NET 9 SDK path and copies `tracehub.bat` into the publish folder, making the published output fully portable.
+> The publish command auto-detects the .NET 10 SDK path and copies `tracehub.bat` into the publish folder, making the published output fully portable.
 
 ---
 
@@ -923,7 +923,7 @@ Main CLI entry point. Commands:
 
 | File                              | Description                          |
 |-----------------------------------|--------------------------------------|
-| `ClaudeTraceHub.Web.csproj`       | Target net9.0, MudBlazor + ClosedXML + Markdig |
+| `ClaudeTraceHub.Web.csproj`       | Target net10.0, MudBlazor + ClosedXML + Markdig |
 | `appsettings.json`                | Logging, NavMenu order, API version, branch patterns|
 | `appsettings.Development.json`    | DetailedErrors for dev mode          |
 | `usersettings.json`               | User-saved Azure DevOps connection   |

@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repository. See [PROJECT_WALKTHROU
 
 ## Project Snapshot
 
-- **Type:** .NET 9.0 Blazor Server app (single project: `ClaudeTraceHub.Web`)
+- **Type:** .NET 10.0 Blazor Server app (single project: `ClaudeTraceHub.Web`)
 - **Render mode:** `@rendermode InteractiveServer` on every page
 - **UI:** MudBlazor 8.15.0 (Material Design)
 - **Other libs:** ClosedXML 0.105.0 (Excel export), Markdig 0.44.0 (Markdown render)
@@ -13,7 +13,7 @@ Guidance for Claude Code when working in this repository. See [PROJECT_WALKTHROU
 
 ## Build & Run
 
-Use the `scripts/*.bat` wrappers — they pin the .NET 9 SDK path so MSBuild picks the right version.
+Use the `scripts/*.bat` wrappers — they pin the .NET 10 SDK path so MSBuild picks the right version.
 
 ```bash
 scripts\restore.bat      # restore packages
@@ -29,7 +29,7 @@ scripts\clean.bat        # dotnet clean
 `scripts/build.bat`, `clean.bat`, `restore.bat`, `run.bat` all set:
 
 ```
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\9.0.314\Sdks
+set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\10.0.401\Sdks
 ```
 
 If a build fails with "SDK not found", check the actual installed version under

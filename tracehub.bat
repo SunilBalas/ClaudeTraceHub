@@ -38,15 +38,15 @@ if "%IS_PUBLISHED%"=="1" (
     echo ERROR: Already in a published folder. Nothing to publish.
     exit /b 1
 )
-:: Auto-detect .NET 9 SDK via dotnet --list-sdks
+:: Auto-detect .NET 10 SDK via dotnet --list-sdks
 for /f "tokens=1,* delims= " %%a in ('dotnet --list-sdks 2^>nul') do (
-    echo %%a | findstr /b "9." >nul && (
+    echo %%a | findstr /b "10." >nul && (
         set "SDK_VER=%%a"
         set "SDK_PATH=%%b"
     )
 )
 if not defined SDK_VER (
-    echo ERROR: .NET 9 SDK not found. Install from https://dot.net/download
+    echo ERROR: .NET 10 SDK not found. Install from https://dot.net/download
     exit /b 1
 )
 :: SDK_PATH has brackets e.g. [C:\Program Files\dotnet\sdk] - strip them
