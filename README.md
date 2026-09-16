@@ -1,6 +1,6 @@
 # ClaudeTraceHub
 
-A .NET 9.0 Blazor Server application for browsing, analyzing, and exporting Claude Code conversation traces with Azure DevOps/TFS work item integration.
+A .NET 10.0 Blazor Server application for browsing, analyzing, and exporting Claude Code conversation traces with Azure DevOps/TFS work item integration.
 
 ClaudeTraceHub automatically discovers conversation data from `~/.claude/projects/` and presents it through an interactive dashboard with activity charts, project browsing, full conversation viewing with GitHub-style diffs, and TFS work item linking.
 
@@ -18,7 +18,7 @@ ClaudeTraceHub automatically discovers conversation data from `~/.claude/project
 
 ## Prerequisites
 
-- [.NET 9 SDK](https://dotnet.microsoft.com/download) (9.0.314 or compatible)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download) (10.0.401 or compatible)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and used (generates `~/.claude/projects/` data)
 - Azure DevOps or TFS instance
 
@@ -107,7 +107,7 @@ appsettings.json → appsettings.Development.json → usersettings.json → IOpt
 
 | Component | Technology |
 |-----------|-----------|
-| Runtime | .NET 9.0 |
+| Runtime | .NET 10.0 |
 | Web Framework | Blazor Server (Interactive Server) |
 | UI Components | MudBlazor 8.15.0 |
 | Excel Export | ClosedXML 0.105.0 |
