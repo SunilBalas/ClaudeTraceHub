@@ -1,6 +1,6 @@
 @echo off
 echo Building ClaudeTraceHub solution...
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\10.0.401\Sdks
+call "%~dp0_set-sdk.bat" || (pause & exit /b 1)
 cd /d "%~dp0.."
 dotnet build ClaudeTraceHub.sln
 echo Built ClaudeTraceHub solution

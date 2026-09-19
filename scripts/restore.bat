@@ -1,6 +1,6 @@
 @echo off
 echo Restoring ClaudeTraceHub solution...
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\10.0.401\Sdks
+call "%~dp0_set-sdk.bat" || (pause & exit /b 1)
 cd /d "%~dp0.."
 dotnet restore ClaudeTraceHub.sln
 echo Restored ClaudeTraceHub solution

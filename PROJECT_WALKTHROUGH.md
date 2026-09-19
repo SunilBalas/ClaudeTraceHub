@@ -872,8 +872,11 @@ The auto command analyzes commits since the last `v*` tag using PowerShell for r
 
 ## 14. Build & Deployment Scripts
 
+### scripts/_set-sdk.bat
+Shared helper called by `build.bat`, `clean.bat`, `restore.bat`, `run.bat`, and `tracehub.bat publish`. Runs `dotnet --version` from the repo root so `global.json` (and its `rollForward` rule) selects the SDK, then resolves that exact version's folder from `dotnet --list-sdks` and pins `MSBuildSDKsPath` to it. Neither the SDK version nor its install path is ever hardcoded. If no installed SDK satisfies `global.json`, it lists the installed SDKs and exits non-zero.
+
 ### scripts/build.bat
-Builds the solution. Sets `MSBuildSDKsPath` to `C:\Program Files\dotnet\sdk\10.0.401\Sdks` to ensure the .NET 10 SDK is used.
+Builds the solution. Calls `_set-sdk.bat` so the correct .NET 10 SDK is used regardless of the installed patch version.
 
 ### scripts/clean.bat
 Cleans build artifacts (`dotnet clean`).
@@ -893,7 +896,7 @@ Main CLI entry point. Commands:
 - `status` — Checks if registered and running
 - `version` — Shows current version
 
-> The publish command auto-detects the .NET 10 SDK path and copies `tracehub.bat` into the publish folder, making the published output fully portable.
+> The publish command resolves the SDK path through `scripts/_set-sdk.bat` and copies `tracehub.bat` into the publish folder, making the published output fully portable.
 
 ---
 
