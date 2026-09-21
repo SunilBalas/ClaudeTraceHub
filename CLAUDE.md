@@ -24,19 +24,21 @@ scripts\clean.bat        # dotnet clean
 
 `tracehub.bat publish` produces a self-contained `win-x64` build under `publish/`.
 
-### SDK path gotcha
+### SDK path resolution
 
-`scripts/build.bat`, `clean.bat`, `restore.bat`, `run.bat` all set:
+`scripts/build.bat`, `clean.bat`, `restore.bat`, `run.bat` and
+`tracehub.bat publish` all `call` `scripts/_set-sdk.bat`. The helper runs
+`dotnet --version` from the repo root — so `global.json` and its `rollForward`
+rule decide the version — then looks that exact version up in
+`dotnet --list-sdks` and pins `MSBuildSDKsPath` to its folder.
 
-```
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\10.0.401\Sdks
-```
+Nothing about the SDK is hardcoded: whichever SDK the CLI would use for this
+repo is the one MSBuild gets, so installing a newer SDK needs no script edits.
+`global.json` is the only place a version appears, and with
+`"rollForward": "latestMajor"` even a new major is picked up automatically.
 
-If a build fails with "SDK not found", check the actual installed version under
-`C:\Program Files\dotnet\sdk\` and update all four scripts plus
-[PROJECT_WALKTHROUGH.md](PROJECT_WALKTHROUGH.md) `§3` and `§14` to match.
-`global.json` rolls forward (`"rollForward": "latestMajor"`), so it does **not**
-need to be edited for routine SDK bumps.
+If no installed SDK satisfies `global.json`, the helper prints an error, lists
+the installed SDKs and exits non-zero rather than building against the wrong one.
 
 ## Repository Layout (top hits)
 

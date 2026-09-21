@@ -38,20 +38,8 @@ if "%IS_PUBLISHED%"=="1" (
     echo ERROR: Already in a published folder. Nothing to publish.
     exit /b 1
 )
-:: Auto-detect .NET 10 SDK via dotnet --list-sdks
-for /f "tokens=1,* delims= " %%a in ('dotnet --list-sdks 2^>nul') do (
-    echo %%a | findstr /b "10." >nul && (
-        set "SDK_VER=%%a"
-        set "SDK_PATH=%%b"
-    )
-)
-if not defined SDK_VER (
-    echo ERROR: .NET 10 SDK not found. Install from https://dot.net/download
-    exit /b 1
-)
-:: SDK_PATH has brackets e.g. [C:\Program Files\dotnet\sdk] - strip them
-set "SDK_PATH=%SDK_PATH:~1,-1%"
-set "MSBuildSDKsPath=%SDK_PATH%\%SDK_VER%\Sdks"
+:: Resolve the SDK major from global.json and pin MSBuild to that SDK
+call "%~dp0scripts\_set-sdk.bat" || exit /b 1
 echo Publishing ClaudeTraceHub...
 echo Using SDK: %MSBuildSDKsPath%
 dotnet publish "%SOURCE_DIR%\ClaudeTraceHub.Web.csproj" -c Release -r win-x64 --self-contained -o "%APP_DIR%"

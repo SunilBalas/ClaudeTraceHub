@@ -1,6 +1,6 @@
 @echo off
 echo Running ClaudeTraceHub application...
-set MSBuildSDKsPath=C:\Program Files\dotnet\sdk\10.0.401\Sdks
+call "%~dp0_set-sdk.bat" || (pause & exit /b 1)
 cd /d "%~dp0.."
 dotnet run --project ClaudeTraceHub.Web --urls "http://localhost:5110;https://localhost:5111"
 echo.
